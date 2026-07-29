@@ -25,7 +25,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      - run: npm ci
+      - name: Lockfile is in sync
+        # `npm ci` fails on a drifted lockfile with an install error that reads
+        # like a registry problem. Saying so plainly here means the fix is
+        # obvious: run npm install and commit the result.
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
