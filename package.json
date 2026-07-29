@@ -1,8 +1,8 @@
 {
   "name": "@sercha-ai/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript client for the Sercha Enterprise API",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": "Custodia Labs Pty Ltd",
   "homepage": "https://github.com/sercha-oss/sercha-js",
   "repository": {
@@ -25,7 +25,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

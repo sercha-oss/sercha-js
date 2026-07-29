@@ -230,4 +230,7 @@ breaking changes. Pin exactly if that matters to you.
 
 ## Licence
 
-Proprietary. Copyright © Custodia Labs Pty Ltd. Support: support@sercha.dev
+[Apache 2.0](LICENSE). Copyright © 2026 Custodia Labs Pty Ltd
+(ABN 89 688 480 391).
+
+Support: support@sercha.dev
