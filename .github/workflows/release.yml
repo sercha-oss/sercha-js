@@ -17,7 +17,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment: npm
+    # No environment gate: pushing a version tag is already the deliberate act,
+    # and NPM_SECRET is a repository secret. Naming an environment here would
+    # auto-create an empty one, leaving NODE_AUTH_TOKEN unset and the publish
+    # failing as a confusing 401. Add one only alongside environment secrets
+    # and a required reviewer.
     steps:
       - uses: actions/checkout@v4
 
