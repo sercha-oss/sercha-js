@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 18 is the floor declared in engines; 22 is current LTS. The client
+        # falls back for AbortSignal.any on 18, so both paths need covering.
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Test
+        run: npm run test:ci
+
+      - name: Build
+        run: npm run build
+
+      # The published artifacts, not the source, are what consumers load. A
+      # build that emits but does not import is still broken.
+      - name: Smoke test built artifacts
+        run: |
+          node --input-type=module -e "
+            import { SerchaClient } from './dist/index.js';
+            import { StubSercha } from './dist/testing.js';
+            const c = new SerchaClient({ baseUrl: 'https://x.test', auth: { token: 't' } });
+            if (typeof c.query !== 'function') throw new Error('query missing from ESM build');
+            if (typeof new StubSercha().query !== 'function') throw new Error('stub missing');
+          "
+          node -e "
+            const { SerchaClient } = require('./dist/index.cjs');
+            const { StubSercha } = require('./dist/testing.cjs');
+            const c = new SerchaClient({ baseUrl: 'https://x.test', auth: { token: 't' } });
+            if (typeof c.query !== 'function') throw new Error('query missing from CJS build');
+            if (typeof new StubSercha().query !== 'function') throw new Error('stub missing');
+          "

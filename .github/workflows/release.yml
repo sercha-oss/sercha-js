@@ -1,0 +1,55 @@
+name: Release
+
+# Publishing is triggered by pushing a version tag, so the published version is
+# always one that exists in git history:
+#
+#   npm version minor && git push --follow-tags
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  # Required for npm provenance, which attests the package was built from this
+  # commit in this workflow. Needs a public repository to be verifiable.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json would publish a version nobody
+      # can find from the tag, so fail before anything reaches the registry.
+      - name: Verify the tag matches package.json
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $GITHUB_REF_NAME implies version $TAG, but package.json says $PKG."
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_SECRET }}
