@@ -23,7 +23,12 @@ import type { Sercha } from '../client.js';
 import { deriveColumns } from '../resources/query.js';
 import { SerchaError, SerchaHttpError } from '../transport/errors.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from '../types/query.js';
-import type { GenieEvent, GenieTurnResult } from '../types/genie.js';
+import type {
+  GenieConversation,
+  GenieConversationDetail,
+  GenieEvent,
+  GenieTurnResult,
+} from '../types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
 import type { SearchRequest, SearchResponse } from '../types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from '../types/catalogue.js';
@@ -64,6 +69,9 @@ export interface StubSerchaOptions {
 export class StubSercha implements Sercha {
   /** Every statement executed, in order. For asserting what the code queried. */
   readonly executed: string[] = [];
+
+  /** Conversations created through this stub. */
+  private readonly conversations: GenieConversation[] = [];
 
   private readonly options: StubSerchaOptions;
 
@@ -153,6 +161,26 @@ export class StubSercha implements Sercha {
       ...(result.kind === 'error' ? { message: result.text } : {}),
     };
     yield { type: 'done', ...(result.model ? { model: result.model } : {}) };
+  }
+
+  async createConversation(title?: string): Promise<GenieConversation> {
+    await this.delay();
+    const id = `stub-conversation-${this.conversations.length + 1}`;
+    const conversation = { id, title: title ?? 'New chat', created_at: 0, updated_at: 0 };
+    this.conversations.push(conversation);
+    return conversation;
+  }
+
+  async listConversations(): Promise<GenieConversation[]> {
+    await this.delay();
+    return this.conversations;
+  }
+
+  async getConversation(conversationId: string): Promise<GenieConversationDetail> {
+    await this.delay();
+    const conversation = this.conversations.find((c) => c.id === conversationId);
+    if (!conversation) throw new SerchaHttpError(404, `conversation ${conversationId} not found`);
+    return { conversation, turns: [] };
   }
 
   async getRun(runId: string): Promise<Run> {

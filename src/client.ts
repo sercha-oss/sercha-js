@@ -7,7 +7,12 @@ import { GenieResource } from './resources/genie.js';
 import { CatalogueResource } from './resources/catalogue.js';
 import { SearchResource } from './resources/search.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
-import type { GenieEvent, GenieTurnResult } from './types/genie.js';
+import type {
+  GenieConversation,
+  GenieConversationDetail,
+  GenieEvent,
+  GenieTurnResult,
+} from './types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
 import type { SearchRequest, SearchResponse } from './types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from './types/catalogue.js';
@@ -29,6 +34,18 @@ export interface Sercha {
 
   ask(conversationId: string, message: string): Promise<GenieTurnResult>;
   stream(conversationId: string, message: string): AsyncGenerator<GenieEvent>;
+  /**
+   * Conversation management.
+   *
+   * On the interface rather than only the concrete client because an
+   * application that streams turns necessarily has to create the conversation
+   * first, and listing them is how a chat history is built. Leaving these off
+   * meant anyone following the advice to type against `Sercha` could stream
+   * into a conversation but never open one.
+   */
+  createConversation(title?: string): Promise<GenieConversation>;
+  listConversations(): Promise<GenieConversation[]>;
+  getConversation(conversationId: string): Promise<GenieConversationDetail>;
 
   getRun(runId: string): Promise<Run>;
   listRuns(query?: ListRunsQuery): Promise<Run[]>;
@@ -112,6 +129,18 @@ export class SerchaClient implements Sercha {
 
   stream(conversationId: string, message: string): AsyncGenerator<GenieEvent> {
     return this.genie.stream(conversationId, message);
+  }
+
+  createConversation(title?: string): Promise<GenieConversation> {
+    return this.genie.createConversation(title);
+  }
+
+  listConversations(): Promise<GenieConversation[]> {
+    return this.genie.listConversations();
+  }
+
+  getConversation(conversationId: string): Promise<GenieConversationDetail> {
+    return this.genie.getConversation(conversationId);
   }
 
   getRun(runId: string): Promise<Run> {
