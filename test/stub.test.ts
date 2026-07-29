@@ -124,4 +124,35 @@ describe('StubSercha', () => {
     const tree = await new StubSercha().catalogueTree();
     expect(tree).toEqual({ ontologies: [], corpuses: [], pipelines: [] });
   });
+
+  it('returns configured entity properties', async () => {
+    const stub = new StubSercha({
+      entityProperties: {
+        'corpus-1.Claim': [
+          { name: 'status', type: 'string', system: false, required: true },
+          { name: 'note', type: 'string', system: false, required: false },
+        ],
+      },
+    });
+
+    const properties = await stub.entityProperties('corpus-1', 'Claim');
+    expect(properties.map((p) => p.name)).toEqual(['status', 'note']);
+    expect(properties[0]?.required).toBe(true);
+  });
+
+  // Unlike a query fixture, an empty property list is a meaningful answer:
+  // "the schema is unknown" rather than "the field is absent". Callers
+  // validating against it must be able to tell those apart.
+  it('returns empty rather than throwing for unconfigured properties', async () => {
+    await expect(new StubSercha().entityProperties('corpus-1', 'Claim')).resolves.toEqual([]);
+  });
+
+  it('returns configured entity types', async () => {
+    const stub = new StubSercha({
+      entityTypes: {
+        'corpus-1': [{ name: 'Claim', display_name: 'Claim', is_root: true }],
+      },
+    });
+    expect((await stub.entityTypes('corpus-1')).map((t) => t.name)).toEqual(['Claim']);
+  });
 });

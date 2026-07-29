@@ -26,7 +26,7 @@ import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from '../ty
 import type { GenieEvent, GenieTurnResult } from '../types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
 import type { SearchRequest, SearchResponse } from '../types/search.js';
-import type { CatalogueTree } from '../types/catalogue.js';
+import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from '../types/catalogue.js';
 
 /** Resolves a statement to rows. Receives the statement with LIMIT/OFFSET applied. */
 export type QueryHandler = (serchaql: string) => QueryRow[] | Promise<QueryRow[]>;
@@ -44,6 +44,10 @@ export interface StubSerchaOptions {
   runs?: Record<string, Run>;
   search?: SearchResponse;
   catalogue?: Partial<CatalogueTree>;
+  /** Entity types, keyed by corpus id. */
+  entityTypes?: Record<string, CatalogueEntityType[]>;
+  /** Entity properties, keyed by "<corpusId>.<entityType>". */
+  entityProperties?: Record<string, CatalogueProperty[]>;
   /** Genie turn responses keyed by message text. */
   genie?: Record<string, GenieTurnResult>;
   /** Artificial latency in ms, to surface races that a zero-latency stub hides. */
@@ -181,6 +185,23 @@ export class StubSercha implements Sercha {
       corpuses: this.options.catalogue?.corpuses ?? [],
       pipelines: this.options.catalogue?.pipelines ?? [],
     };
+  }
+
+  async entityTypes(corpusId: string): Promise<CatalogueEntityType[]> {
+    await this.delay();
+    return this.options.entityTypes?.[corpusId] ?? [];
+  }
+
+  /**
+   * Returns an empty list when unconfigured rather than throwing.
+   *
+   * Unlike a query fixture, an empty property list is a meaningful answer: it
+   * says the schema is unknown. Callers validating against it should treat
+   * "no properties" as "cannot verify" rather than "the field is absent".
+   */
+  async entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]> {
+    await this.delay();
+    return this.options.entityProperties?.[`${corpusId}.${entityType}`] ?? [];
   }
 
   private async resolve(serchaql: string): Promise<QueryRow[]> {

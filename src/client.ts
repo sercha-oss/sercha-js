@@ -10,7 +10,7 @@ import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './typ
 import type { GenieEvent, GenieTurnResult } from './types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
 import type { SearchRequest, SearchResponse } from './types/search.js';
-import type { CatalogueTree } from './types/catalogue.js';
+import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from './types/catalogue.js';
 
 /**
  * The client's capability surface.
@@ -35,6 +35,16 @@ export interface Sercha {
   waitForRun(runId: string, options?: WaitForRunOptions): Promise<Run>;
 
   catalogueTree(options?: { queryable?: boolean }): Promise<CatalogueTree>;
+  entityTypes(corpusId: string): Promise<CatalogueEntityType[]>;
+  /**
+   * Properties of an entity type.
+   *
+   * The only schema this API exposes. Part of the interface rather than only
+   * the concrete client because validating a query's assumptions against the
+   * real schema is something an application does at startup, and it should be
+   * able to do that against a stub too.
+   */
+  entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]>;
 }
 
 /**
@@ -118,6 +128,14 @@ export class SerchaClient implements Sercha {
 
   catalogueTree(options?: { queryable?: boolean }): Promise<CatalogueTree> {
     return this.catalogue.tree(options);
+  }
+
+  entityTypes(corpusId: string): Promise<CatalogueEntityType[]> {
+    return this.catalogue.entityTypes(corpusId);
+  }
+
+  entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]> {
+    return this.catalogue.entityProperties(corpusId, entityType);
   }
 
   /**
