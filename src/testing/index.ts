@@ -32,6 +32,13 @@ import type {
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
 import type { SearchRequest, SearchResponse } from '../types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from '../types/catalogue.js';
+import type {
+  AppendLedgerRecord,
+  CreateLedgerRecordType,
+  LedgerRecord,
+  LedgerRecordType,
+  ListLedgerRecordsQuery,
+} from '../types/ledger.js';
 
 /** Resolves a statement to rows. Receives the statement with LIMIT/OFFSET applied. */
 export type QueryHandler = (serchaql: string) => QueryRow[] | Promise<QueryRow[]>;
@@ -230,6 +237,122 @@ export class StubSercha implements Sercha {
   async entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]> {
     await this.delay();
     return this.options.entityProperties?.[`${corpusId}.${entityType}`] ?? [];
+  }
+
+  /**
+   * Ledger, backed by memory.
+   *
+   * A working append-only store rather than a set of no-ops, because the
+   * behaviour worth testing IS the append-only behaviour: that a correction
+   * writes a new record, that the original survives it, and that a record
+   * cannot be superseded twice. A stub returning empty objects would let an
+   * application pass its tests and then break on the first real correction.
+   */
+  private readonly recordTypes_: LedgerRecordType[] = [];
+  private readonly records_: LedgerRecord[] = [];
+  private seq = 0;
+
+  async createRecordType(input: CreateLedgerRecordType): Promise<LedgerRecordType> {
+    await this.delay();
+    const existing = this.recordTypes_.find(
+      (t) => t.ontology === input.ontology && t.name === input.name,
+    );
+    // Types are permanent and have no retire path, so redeclaring one is a
+    // mistake worth surfacing rather than silently returning the original.
+    if (existing) {
+      throw new SerchaError(`Record type ${input.ontology}.${input.name} is already declared.`);
+    }
+    const created: LedgerRecordType = {
+      id: `rt_${++this.seq}`,
+      created_at: new Date(0).toISOString(),
+      ...input,
+    };
+    this.recordTypes_.push(created);
+    return created;
+  }
+
+  async recordTypes(ontology: string): Promise<LedgerRecordType[]> {
+    await this.delay();
+    return this.recordTypes_.filter((t) => t.ontology === ontology);
+  }
+
+  async appendRecord(record: AppendLedgerRecord): Promise<LedgerRecord> {
+    await this.delay();
+    return this.write(record, null);
+  }
+
+  async supersedeRecord(id: string, record: AppendLedgerRecord): Promise<LedgerRecord> {
+    await this.delay();
+    if (!this.records_.some((r) => r.id === id)) {
+      throw new SerchaError(`No record ${id} to supersede.`);
+    }
+    // At most once, so chains stay linear and "the current version" is
+    // unambiguous.
+    if (this.records_.some((r) => r.supersedes_id === id)) {
+      throw new SerchaError(
+        `Record ${id} has already been superseded. Correct the current version instead.`,
+      );
+    }
+    return this.write(record, id);
+  }
+
+  async getRecord(id: string): Promise<LedgerRecord> {
+    await this.delay();
+    const found = this.records_.find((r) => r.id === id);
+    if (!found) throw new SerchaError(`No record ${id}.`);
+    return found;
+  }
+
+  async listRecords(query: ListLedgerRecordsQuery = {}): Promise<LedgerRecord[]> {
+    await this.delay();
+    return this.records_.filter(
+      (r) =>
+        (query.subject_key === undefined || r.subject_key === query.subject_key) &&
+        (query.corpus_id === undefined || r.subject_corpus_id === query.corpus_id) &&
+        (query.record_type_id === undefined || r.record_type_id === query.record_type_id) &&
+        (query.kind === undefined || r.kind === query.kind),
+    );
+  }
+
+  async subjectHistory(subjectKey: string): Promise<LedgerRecord[]> {
+    await this.delay();
+    return this.records_.filter((r) => r.subject_key === subjectKey);
+  }
+
+  private write(record: AppendLedgerRecord, supersedesId: string | null): LedgerRecord {
+    if (!record.subject_key) {
+      throw new SerchaError('append needs a subject_key.');
+    }
+    if (!record.subject_corpus_id) {
+      throw new SerchaError('append needs a subject_corpus_id.');
+    }
+    const type = this.recordTypes_.find((t) => t.id === record.record_type_id);
+    // The real ledger requires a declared type, so the stub does too: an
+    // application that works against the stub without one would fail on first
+    // contact with a real instance.
+    if (!type) {
+      throw new SerchaError(
+        `No record type ${record.record_type_id}. Declare it with createRecordType first.`,
+      );
+    }
+    const written: LedgerRecord = {
+      id: `rec_${++this.seq}`,
+      subject_key: record.subject_key,
+      subject_corpus_id: record.subject_corpus_id,
+      ...(record.subject_entity ? { subject_entity: record.subject_entity } : {}),
+      record_type_id: record.record_type_id,
+      kind: type.kind,
+      values: record.values ?? {},
+      authority: record.authority ?? 'asserted',
+      confidence: record.confidence ?? null,
+      evidence: record.evidence ?? [],
+      author_kind: 'human',
+      author_id: 'stub-user',
+      supersedes_id: supersedesId,
+      created_at: new Date(0).toISOString(),
+    };
+    this.records_.push(written);
+    return written;
   }
 
   private async resolve(serchaql: string): Promise<QueryRow[]> {

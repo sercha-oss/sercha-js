@@ -5,6 +5,7 @@ import { QueryResource } from './resources/query.js';
 import { RunsResource } from './resources/runs.js';
 import { GenieResource } from './resources/genie.js';
 import { CatalogueResource } from './resources/catalogue.js';
+import { LedgerResource } from './resources/ledger.js';
 import { SearchResource } from './resources/search.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
 import type {
@@ -16,6 +17,13 @@ import type {
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
 import type { SearchRequest, SearchResponse } from './types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from './types/catalogue.js';
+import type {
+  AppendLedgerRecord,
+  CreateLedgerRecordType,
+  LedgerRecord,
+  LedgerRecordType,
+  ListLedgerRecordsQuery,
+} from './types/ledger.js';
 
 /**
  * The client's capability surface.
@@ -62,6 +70,23 @@ export interface Sercha {
    * able to do that against a stub too.
    */
   entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]>;
+
+  /**
+   * Ledger: append-only records about facts.
+   *
+   * On the interface rather than only the concrete client because annotating a
+   * fact is an ordinary thing for an application to do, and it should be
+   * testable against a stub without reaching a real instance. Reading records
+   * is also possible through `query()` via `ledger.*` relations; these methods
+   * are the write path and the typed read.
+   */
+  createRecordType(input: CreateLedgerRecordType): Promise<LedgerRecordType>;
+  recordTypes(ontology: string): Promise<LedgerRecordType[]>;
+  appendRecord(record: AppendLedgerRecord): Promise<LedgerRecord>;
+  supersedeRecord(id: string, record: AppendLedgerRecord): Promise<LedgerRecord>;
+  getRecord(id: string): Promise<LedgerRecord>;
+  listRecords(query?: ListLedgerRecordsQuery): Promise<LedgerRecord[]>;
+  subjectHistory(subjectKey: string): Promise<LedgerRecord[]>;
 }
 
 /**
@@ -84,6 +109,7 @@ export class SerchaClient implements Sercha {
   readonly runs: RunsResource;
   readonly genie: GenieResource;
   readonly catalogue: CatalogueResource;
+  readonly ledger: LedgerResource;
   readonly documents: SearchResource;
 
   private readonly transport: HttpTransport;
@@ -97,6 +123,7 @@ export class SerchaClient implements Sercha {
     this.runs = new RunsResource(this.transport);
     this.genie = new GenieResource(this.transport);
     this.catalogue = new CatalogueResource(this.transport);
+    this.ledger = new LedgerResource(this.transport);
     this.documents = new SearchResource(this.transport);
   }
 
@@ -165,6 +192,34 @@ export class SerchaClient implements Sercha {
 
   entityProperties(corpusId: string, entityType: string): Promise<CatalogueProperty[]> {
     return this.catalogue.entityProperties(corpusId, entityType);
+  }
+
+  createRecordType(input: CreateLedgerRecordType): Promise<LedgerRecordType> {
+    return this.ledger.createRecordType(input);
+  }
+
+  recordTypes(ontology: string): Promise<LedgerRecordType[]> {
+    return this.ledger.recordTypes(ontology);
+  }
+
+  appendRecord(record: AppendLedgerRecord): Promise<LedgerRecord> {
+    return this.ledger.append(record);
+  }
+
+  supersedeRecord(id: string, record: AppendLedgerRecord): Promise<LedgerRecord> {
+    return this.ledger.supersede(id, record);
+  }
+
+  getRecord(id: string): Promise<LedgerRecord> {
+    return this.ledger.get(id);
+  }
+
+  listRecords(query?: ListLedgerRecordsQuery): Promise<LedgerRecord[]> {
+    return this.ledger.records(query);
+  }
+
+  subjectHistory(subjectKey: string): Promise<LedgerRecord[]> {
+    return this.ledger.subjectHistory(subjectKey);
   }
 
   /**

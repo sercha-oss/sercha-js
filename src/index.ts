@@ -46,6 +46,7 @@ export { QueryResource, deriveColumns } from './resources/query.js';
 export { RunsResource } from './resources/runs.js';
 export { GenieResource, type StreamOptions } from './resources/genie.js';
 export { CatalogueResource } from './resources/catalogue.js';
+export { LedgerResource } from './resources/ledger.js';
 export { SearchResource } from './resources/search.js';
 
 export type {
@@ -110,3 +111,17 @@ export type {
 // Exported for consumers implementing the Sercha interface themselves, e.g. a
 // recording proxy or a fixture generator.
 export { SseParser, readSseStream, type SseFrame } from './transport/sse.js';
+
+export type {
+  AppendLedgerRecord,
+  CreateLedgerRecordType,
+  LedgerAuthorKind,
+  LedgerAuthority,
+  LedgerEvidence,
+  LedgerRecord,
+  LedgerRecordKind,
+  LedgerRecordType,
+  LedgerRecordTypeProperty,
+  LedgerValueType,
+  ListLedgerRecordsQuery,
+} from './types/ledger.js';
