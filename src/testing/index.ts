@@ -30,7 +30,7 @@ import type {
   GenieTurnResult,
 } from '../types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
-import type { SearchRequest, SearchResponse } from '../types/search.js';
+import type { Document, SearchRequest, SearchResponse } from '../types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from '../types/catalogue.js';
 import type {
   AppendLedgerRecord,
@@ -55,6 +55,8 @@ export interface StubSerchaOptions {
   onQuery?: QueryHandler;
   runs?: Record<string, Run>;
   search?: SearchResponse;
+  /** Documents by id, for resolving the source behind a query row. */
+  documents?: Record<string, Document>;
   catalogue?: Partial<CatalogueTree>;
   /** Entity types, keyed by corpus id. */
   entityTypes?: Record<string, CatalogueEntityType[]>;
@@ -139,6 +141,26 @@ export class StubSercha implements Sercha {
         total_count: 0,
       }
     );
+  }
+
+  /**
+   * Resolve a document id against the configured fixtures.
+   *
+   * Throws for an unknown id rather than returning a placeholder. A caller
+   * asking where a figure came from is checking provenance, and inventing a
+   * document would answer the question wrongly instead of admitting the
+   * fixture is missing.
+   */
+  async getDocument(documentId: string, _signal?: AbortSignal): Promise<Document> {
+    await this.delay();
+    const found = this.options.documents?.[documentId];
+    if (!found) {
+      throw new Error(
+        `StubSercha: no document fixture for ${documentId}. ` +
+          'Add one to the `documents` option.',
+      );
+    }
+    return found;
   }
 
   async ask(_conversationId: string, message: string): Promise<GenieTurnResult> {

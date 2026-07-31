@@ -15,7 +15,7 @@ import type {
   GenieTurnResult,
 } from './types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
-import type { SearchRequest, SearchResponse } from './types/search.js';
+import type { Document, SearchRequest, SearchResponse } from './types/search.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from './types/catalogue.js';
 import type {
   AppendLedgerRecord,
@@ -39,6 +39,17 @@ export interface Sercha {
   one<T = QueryRow>(serchaql: string, options?: QueryOptions): Promise<T>;
 
   search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse>;
+  /**
+   * Resolve a document id to its metadata.
+   *
+   * On the interface for the same reason as the conversation methods: every
+   * query row carries the id of the document its facts were extracted from, so
+   * an application that shows a figure and wants to name its source has the id
+   * already and nothing to do with it. Leaving this off the interface meant
+   * anyone following the advice to type against `Sercha` could read the id but
+   * never resolve it.
+   */
+  getDocument(documentId: string, signal?: AbortSignal): Promise<Document>;
 
   ask(conversationId: string, message: string): Promise<GenieTurnResult>;
   stream(conversationId: string, message: string): AsyncGenerator<GenieEvent>;
@@ -148,6 +159,10 @@ export class SerchaClient implements Sercha {
 
   search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
     return this.documents.search(request, signal);
+  }
+
+  getDocument(documentId: string, signal?: AbortSignal): Promise<Document> {
+    return this.documents.getDocument(documentId, signal);
   }
 
   ask(conversationId: string, message: string): Promise<GenieTurnResult> {

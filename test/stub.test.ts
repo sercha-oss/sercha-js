@@ -156,3 +156,28 @@ describe('StubSercha', () => {
     expect((await stub.entityTypes('corpus-1')).map((t) => t.name)).toEqual(['Claim']);
   });
 });
+
+describe('StubSercha.getDocument', () => {
+  const doc = {
+    id: 'doc-1',
+    source_id: 'src-1',
+    external_id: 'file-1',
+    path: 'https://example.invalid/file.xlsx',
+    title: 'Profit and Loss FY26.xlsx',
+    mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    indexed_at: '2026-07-30T23:16:49Z',
+  };
+
+  it('resolves a configured document', async () => {
+    const stub = new StubSercha({ documents: { 'doc-1': doc } });
+    await expect(stub.getDocument('doc-1')).resolves.toEqual(doc);
+  });
+
+  it('throws for an unknown id rather than inventing one', async () => {
+    // A caller resolving a document id is checking provenance. Returning a
+    // placeholder would answer "where did this figure come from" with a
+    // fabrication, which is worse than admitting the fixture is missing.
+    const stub = new StubSercha({ documents: { 'doc-1': doc } });
+    await expect(stub.getDocument('doc-2')).rejects.toThrow(/no document fixture/);
+  });
+});
