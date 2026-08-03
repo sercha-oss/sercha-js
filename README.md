@@ -124,6 +124,35 @@ needs clarification before it can answer — send another turn.
 If the connection drops mid-turn the events are lost, but the turn is persisted
 server-side; `getConversation()` recovers what it produced.
 
+### Stateless turns
+
+`streamMessages()` and `askMessages()` take the whole transcript and Sercha
+stores nothing. Use them when your application owns its own conversation
+history: ownership, retention and scoping then stay somewhere you can enforce
+them, rather than being split across two systems joined by an id.
+
+```ts
+const messages = [
+  { role: 'user', content: 'which claims breached SLA?' },
+  { role: 'assistant', content: 'Four did, all in March.' },
+  { role: 'user', content: 'which of them were reopened?' },
+];
+
+for await (const event of sercha.genie.streamMessages(messages)) {
+  if (event.type === 'answer') console.log(event.text);
+}
+```
+
+Prior context exists only because you send it: nothing is remembered between
+calls, and no `conversation_id` is emitted. A first turn is legitimately a
+single message.
+
+**Requires Sercha 0.11.1 or newer.** These methods send a `stateless` flag that
+older servers ignore, and an older server reads a single message as the start
+of a new conversation and persists it — creating conversations your application
+never asked for and cannot reach. Against a server older than 0.11.1, send at
+least two messages.
+
 ## Runs
 
 ```ts
