@@ -125,19 +125,19 @@ export class GenieResource {
     if (messages.length === 0) {
       throw new SerchaError('streamMessages needs at least one message.');
     }
-    // One message takes an implicit-conversation path on the backend, which
-    // persists a conversation and emits its id: the opposite of what this
-    // method promises. Refusing is better than silently creating state the
-    // caller does not know about and will never clean up.
-    if (messages.length === 1) {
-      throw new SerchaError(
-        'streamMessages needs at least two messages to stay stateless. ' +
-          'A single message is treated as a new conversation by the server and ' +
-          'is persisted. Prepend the prior turns, or use stream() if you want ' +
-          'server-side storage.',
-      );
-    }
-    yield* this.streamFrom('/api/v1/genie/chat', { messages }, options);
+    // `stateless` is what keeps this method honest. Without it the server
+    // reads a single message as the start of a new conversation and persists
+    // it, emitting an id the caller never asked for and will never clean up.
+    //
+    // It is sent on every call, not only single-message ones: a first turn has
+    // no prior turns, so the transcript legitimately holds one message, and a
+    // count cannot distinguish that from "begin a conversation". The caller
+    // chose this method, and that is the statement of intent.
+    //
+    // Older servers ignore the unknown field. Against one of those a
+    // single-message call still creates a conversation, so pass at least two
+    // messages if you must support them.
+    yield* this.streamFrom('/api/v1/genie/chat', { messages, stateless: true }, options);
   }
 
   /**

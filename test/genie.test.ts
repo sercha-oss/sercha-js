@@ -211,24 +211,32 @@ describe('genie stateless surface', () => {
     const [url] = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1]!;
     expect(String(url)).toContain('/api/v1/genie/chat');
     expect(String(url)).not.toContain('/conversations/');
-    expect(requestBody(fetchImpl)).toEqual({ messages: transcript });
+    expect(requestBody(fetchImpl)).toEqual({ messages: transcript, stateless: true });
   });
 
-  it('refuses a single message rather than silently creating a conversation', async () => {
-    // One message takes the server's implicit-conversation path, which
-    // persists state and emits a conversation_id: the opposite of what this
-    // method promises. Failing loudly beats creating something the caller does
-    // not know about and will never clean up.
-    const fetchImpl = mockFetch(sseResponse(frame('done', { type: 'done' })));
-    const client = clientWith(fetchImpl);
+  it('sends a single message with the stateless flag rather than refusing it', async () => {
+    // A first turn has no prior turns, so a one-message transcript is the
+    // normal opening of any application-owned conversation. This method used
+    // to refuse it, which left applications unable to start one at all.
+    //
+    // The flag is what makes it safe: without it the server reads a single
+    // message as "begin a conversation" and persists it. Message count cannot
+    // express the difference, so the caller states it.
+    const fetchImpl = mockFetch(
+      sseResponse(
+        frame('answer', { type: 'answer', text: 'ok' }),
+        frame('done', { type: 'done', model: 'claude' }),
+      ),
+    );
 
-    await expect(async () => {
-      for await (const _ of client.streamMessages([transcript[0]!])) {
-        // unreachable
-      }
-    }).rejects.toThrow(/at least two messages/);
+    for await (const _ of clientWith(fetchImpl).streamMessages([transcript[0]!])) {
+      // drain
+    }
 
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(requestBody(fetchImpl)).toEqual({
+      messages: [transcript[0]],
+      stateless: true,
+    });
   });
 
   it('refuses an empty transcript', async () => {
