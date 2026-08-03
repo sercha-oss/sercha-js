@@ -27,6 +27,7 @@ import type {
   GenieConversation,
   GenieConversationDetail,
   GenieEvent,
+  GenieMessage,
   GenieTurnResult,
 } from '../types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
@@ -174,6 +175,18 @@ export class StubSercha implements Sercha {
       queries: [],
       events: [],
     };
+  }
+
+  /**
+   * Stateless ask. Fixtures are keyed on the message, so the last user turn is
+   * what selects one: the earlier transcript is context the stub does not model.
+   */
+  async askMessages(messages: GenieMessage[]): Promise<GenieTurnResult> {
+    return this.ask('', lastUserMessage(messages));
+  }
+
+  async *streamMessages(messages: GenieMessage[]): AsyncGenerator<GenieEvent> {
+    yield* this.stream('', lastUserMessage(messages));
   }
 
   async *stream(conversationId: string, message: string): AsyncGenerator<GenieEvent> {
@@ -395,4 +408,18 @@ export class StubSercha implements Sercha {
     const ms = this.options.latencyMs ?? 0;
     return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
   }
+}
+
+/**
+ * The message a stateless fixture lookup should key on.
+ *
+ * The last user turn, because that is the question being asked; the rest of the
+ * transcript is context. Falls back to the final message so a malformed
+ * transcript still produces a deterministic lookup rather than throwing.
+ */
+function lastUserMessage(messages: GenieMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i]?.role === 'user') return messages[i]!.content;
+  }
+  return messages[messages.length - 1]?.content ?? '';
 }

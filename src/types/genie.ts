@@ -95,3 +95,15 @@ export interface GenieTurnResult {
   /** Every event, in order, for callers wanting the full trace. */
   events: GenieEvent[];
 }
+
+/**
+ * One turn of a transcript the caller owns.
+ *
+ * Used by the stateless surface, where the application keeps the conversation
+ * in its own store and replays it on each request. Mirrors the backend's
+ * GenieMessage exactly: role is "user" or "assistant", content is plain text.
+ */
+export interface GenieMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}

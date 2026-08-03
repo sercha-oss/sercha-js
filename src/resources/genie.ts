@@ -2,6 +2,7 @@ import type { HttpTransport } from '../transport/http.js';
 import { SerchaError, SerchaHttpError } from '../transport/errors.js';
 import { readSseStream } from '../transport/sse.js';
 import type {
+  GenieMessage,
   GenieConversation,
   GenieConversationDetail,
   GenieEvent,
@@ -87,9 +88,71 @@ export class GenieResource {
     message: string,
     options: StreamOptions = {},
   ): AsyncGenerator<GenieEvent> {
-    const url = this.http.buildUrl(
+    yield* this.streamFrom(
       `/api/v1/genie/conversations/${encodeURIComponent(conversationId)}/chat`,
+      { message },
+      options,
     );
+  }
+
+  /**
+   * Run a turn against a transcript the caller owns.
+   *
+   * The stateless surface. Sercha persists nothing: no conversation is created,
+   * no turn is stored, and the done event carries no conversation_id. The
+   * application supplies the whole history on every call and keeps it wherever
+   * it likes.
+   *
+   * This is the mode an application should use. Sercha's own conversation
+   * storage enforces ownership by the calling identity, and an application
+   * authenticates with one service account for all of its users, so that check
+   * cannot distinguish them: every user would see every other user's
+   * conversations. Owning the transcript sidesteps that entirely, and lets the
+   * application scope conversations however it needs to.
+   *
+   * Two things the caller inherits responsibility for. The backend caps a
+   * transcript at 40 messages of 8000 characters each, so a long conversation
+   * has to be trimmed before it is sent. And a conversation-scoped turn gets an
+   * enrichment block listing previously executed statements and their row
+   * counts, telling the model not to re-run them; there is no equivalent here,
+   * so an application that wants it synthesises one from the query and result
+   * events it already receives.
+   */
+  async *streamMessages(
+    messages: GenieMessage[],
+    options: StreamOptions = {},
+  ): AsyncGenerator<GenieEvent> {
+    if (messages.length === 0) {
+      throw new SerchaError('streamMessages needs at least one message.');
+    }
+    // One message takes an implicit-conversation path on the backend, which
+    // persists a conversation and emits its id: the opposite of what this
+    // method promises. Refusing is better than silently creating state the
+    // caller does not know about and will never clean up.
+    if (messages.length === 1) {
+      throw new SerchaError(
+        'streamMessages needs at least two messages to stay stateless. ' +
+          'A single message is treated as a new conversation by the server and ' +
+          'is persisted. Prepend the prior turns, or use stream() if you want ' +
+          'server-side storage.',
+      );
+    }
+    yield* this.streamFrom('/api/v1/genie/chat', { messages }, options);
+  }
+
+  /**
+   * Shared SSE plumbing for both surfaces.
+   *
+   * Extracted so the two entry points cannot drift on error handling, which is
+   * the fiddly part: a pre-stream failure arrives as ordinary JSON with a
+   * normal status code, so an ok response is not by itself proof of a stream.
+   */
+  private async *streamFrom(
+    path: string,
+    body: Record<string, unknown>,
+    options: StreamOptions,
+  ): AsyncGenerator<GenieEvent> {
+    const url = this.http.buildUrl(path);
     const timeoutMs = options.timeoutMs ?? this.http.resolved.streamTimeoutMs;
 
     const response = await this.http.resolved.fetch(url, {
@@ -101,7 +164,7 @@ export class GenieResource {
         Authorization: await this.http.authHeader(),
         ...this.http.resolved.headers,
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify(body),
       signal: composeSignal(options.signal, timeoutMs),
     });
 
@@ -156,56 +219,83 @@ export class GenieResource {
     message: string,
     options: StreamOptions = {},
   ): Promise<GenieTurnResult> {
-    const events: GenieEvent[] = [];
-    const queries = new Map<number, GenieQuery>();
-    let terminal: { kind: 'answer' | 'question' | 'error'; text: string } | undefined;
-    let model: string | undefined;
-    let conversation: string | undefined;
-
-    for await (const event of this.stream(conversationId, message, options)) {
-      events.push(event);
-
-      switch (event.type) {
-        case 'query':
-        case 'result':
-          // `result` carries the same id as its `query` plus rows, so it
-          // supersedes it.
-          if (event.query) queries.set(event.query.id, event.query);
-          break;
-        case 'answer':
-        case 'question':
-          terminal = { kind: event.type, text: event.text ?? '' };
-          break;
-        case 'error':
-          terminal = { kind: 'error', text: event.message ?? event.text ?? 'Genie turn failed' };
-          break;
-        case 'done':
-          model = event.model;
-          conversation = event.conversation_id;
-          break;
-        default:
-          break;
-      }
-    }
-
-    if (!terminal) {
-      // The stream closed without a terminal event: a dropped connection or a
-      // server-side abort. Surfacing this as an empty answer would be a lie.
-      throw new SerchaError(
-        'Genie stream ended without a terminal event. The turn may have been ' +
-          'interrupted; fetch the conversation to see what was persisted.',
-      );
-    }
-
-    return {
-      kind: terminal.kind,
-      text: terminal.text,
-      queries: [...queries.values()].sort((a, b) => a.id - b.id),
-      ...(model !== undefined ? { model } : {}),
-      ...(conversation !== undefined ? { conversation_id: conversation } : {}),
-      events,
-    };
+    return collectTurn(this.stream(conversationId, message, options));
   }
+
+  /**
+   * Run a stateless turn and return its accumulated outcome.
+   *
+   * The same relationship to streamMessages that ask() has to stream(): for a
+   * caller that wants the answer rather than the progress. `query` and `result`
+   * events are merged so each statement appears once, with its rows.
+   *
+   * A UI rendering its own tables usually wants streamMessages instead, since
+   * this resolves only when the turn is complete.
+   */
+  async askMessages(
+    messages: GenieMessage[],
+    options: StreamOptions = {},
+  ): Promise<GenieTurnResult> {
+    return collectTurn(this.streamMessages(messages, options));
+  }
+}
+
+/**
+ * Accumulate a turn's events into its outcome.
+ *
+ * Shared by both ask surfaces so they cannot diverge on how a terminal event
+ * is recognised or how queries are merged with their results.
+ */
+async function collectTurn(stream: AsyncGenerator<GenieEvent>): Promise<GenieTurnResult> {
+  const events: GenieEvent[] = [];
+  const queries = new Map<number, GenieQuery>();
+  let terminal: { kind: 'answer' | 'question' | 'error'; text: string } | undefined;
+  let model: string | undefined;
+  let conversation: string | undefined;
+
+  for await (const event of stream) {
+    events.push(event);
+
+    switch (event.type) {
+      case 'query':
+      case 'result':
+        // `result` carries the same id as its `query` plus rows, so it
+        // supersedes it.
+        if (event.query) queries.set(event.query.id, event.query);
+        break;
+      case 'answer':
+      case 'question':
+        terminal = { kind: event.type, text: event.text ?? '' };
+        break;
+      case 'error':
+        terminal = { kind: 'error', text: event.message ?? event.text ?? 'Genie turn failed' };
+        break;
+      case 'done':
+        model = event.model;
+        conversation = event.conversation_id;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (!terminal) {
+    // The stream closed without a terminal event: a dropped connection or a
+    // server-side abort. Surfacing this as an empty answer would be a lie.
+    throw new SerchaError(
+      'Genie stream ended without a terminal event. The turn may have been ' +
+        'interrupted; fetch the conversation to see what was persisted.',
+    );
+  }
+
+  return {
+    kind: terminal.kind,
+    text: terminal.text,
+    queries: [...queries.values()].sort((a, b) => a.id - b.id),
+    ...(model !== undefined ? { model } : {}),
+    ...(conversation !== undefined ? { conversation_id: conversation } : {}),
+    events,
+  };
 }
 
 async function toStreamError(response: Response): Promise<SerchaHttpError> {

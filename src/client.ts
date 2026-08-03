@@ -13,6 +13,7 @@ import type {
   GenieConversationDetail,
   GenieEvent,
   GenieTurnResult,
+  GenieMessage,
 } from './types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
 import type { Document, SearchRequest, SearchResponse } from './types/search.js';
@@ -53,6 +54,18 @@ export interface Sercha {
 
   ask(conversationId: string, message: string): Promise<GenieTurnResult>;
   stream(conversationId: string, message: string): AsyncGenerator<GenieEvent>;
+  /**
+   * Stateless Genie: the caller owns the transcript and Sercha persists
+   * nothing.
+   *
+   * On the interface, not just the concrete client, because this is the mode an
+   * application should use. Sercha's conversation storage enforces ownership by
+   * the calling identity, and an application authenticates with one service
+   * account for all of its users, so that check cannot tell them apart. Owning
+   * the transcript avoids the problem rather than working around it.
+   */
+  askMessages(messages: GenieMessage[]): Promise<GenieTurnResult>;
+  streamMessages(messages: GenieMessage[]): AsyncGenerator<GenieEvent>;
   /**
    * Conversation management.
    *
@@ -163,6 +176,14 @@ export class SerchaClient implements Sercha {
 
   getDocument(documentId: string, signal?: AbortSignal): Promise<Document> {
     return this.documents.getDocument(documentId, signal);
+  }
+
+  askMessages(messages: GenieMessage[]): Promise<GenieTurnResult> {
+    return this.genie.askMessages(messages);
+  }
+
+  streamMessages(messages: GenieMessage[]): AsyncGenerator<GenieEvent> {
+    return this.genie.streamMessages(messages);
   }
 
   ask(conversationId: string, message: string): Promise<GenieTurnResult> {

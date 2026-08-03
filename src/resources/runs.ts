@@ -65,11 +65,22 @@ export class RunsResource {
    *
    * The returned run omits document_ids and document_count; fetch it with
    * get() if those are needed.
+   *
+   * @param triggeredBy Ignored since 0.3.0, and kept only so an existing caller
+   * still compiles. The server took this from the request body and trusted it,
+   * which let any caller attribute a run to any user id it chose. Sercha's own
+   * rule, stated in its query handler, is that a subject is always derived from
+   * the authenticated caller and never accepted from a body, because doing so
+   * allows privilege escalation by forging another user's identity. This
+   * parameter was the one place that rule was broken, so the SDK stopped
+   * sending the field. Attribution now comes from the token, which is the only
+   * source that cannot be forged.
    */
   async trigger(pipelineId: string, triggeredBy?: string, signal?: AbortSignal): Promise<Run> {
+    void triggeredBy;
     return this.http.request<Run>(`/api/v1/pipelines/${encodeURIComponent(pipelineId)}/runs`, {
       method: 'POST',
-      body: triggeredBy ? { triggered_by: triggeredBy } : {},
+      body: {},
       ...(signal ? { signal } : {}),
     });
   }

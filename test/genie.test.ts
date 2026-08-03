@@ -187,3 +187,86 @@ describe('genie conversations', () => {
     expect(await clientWith(fetchImpl).genie.listConversations()).toEqual([]);
   });
 });
+
+describe('genie stateless surface', () => {
+  const transcript = [
+    { role: 'user' as const, content: 'revenue by quarter?' },
+    { role: 'assistant' as const, content: '[a table]' },
+    { role: 'user' as const, content: 'now split by client' },
+  ];
+
+  it('posts the whole transcript to the stateless route', async () => {
+    const fetchImpl = mockFetch(
+      sseResponse(
+        frame('answer', { type: 'answer', text: 'ok' }),
+        frame('done', { type: 'done', model: 'claude' }),
+      ),
+    );
+
+    for await (const _ of clientWith(fetchImpl).streamMessages(transcript)) {
+      // drain
+    }
+
+    // The last call, not the first: call 0 is the OAuth token exchange.
+    const [url] = fetchImpl.mock.calls[fetchImpl.mock.calls.length - 1]!;
+    expect(String(url)).toContain('/api/v1/genie/chat');
+    expect(String(url)).not.toContain('/conversations/');
+    expect(requestBody(fetchImpl)).toEqual({ messages: transcript });
+  });
+
+  it('refuses a single message rather than silently creating a conversation', async () => {
+    // One message takes the server's implicit-conversation path, which
+    // persists state and emits a conversation_id: the opposite of what this
+    // method promises. Failing loudly beats creating something the caller does
+    // not know about and will never clean up.
+    const fetchImpl = mockFetch(sseResponse(frame('done', { type: 'done' })));
+    const client = clientWith(fetchImpl);
+
+    await expect(async () => {
+      for await (const _ of client.streamMessages([transcript[0]!])) {
+        // unreachable
+      }
+    }).rejects.toThrow(/at least two messages/);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty transcript', async () => {
+    const client = clientWith(mockFetch(sseResponse(frame('done', { type: 'done' }))));
+    await expect(async () => {
+      for await (const _ of client.streamMessages([])) {
+        // unreachable
+      }
+    }).rejects.toThrow(/at least one message/);
+  });
+
+  it('accumulates a stateless turn, merging queries with their results', async () => {
+    const query = { id: 0, serchaql: 'SELECT 1', title: 'One' };
+    const fetchImpl = mockFetch(
+      sseResponse(
+        frame('query', { type: 'query', query }),
+        frame('result', { type: 'result', query: { ...query, row_count: 47 } }),
+        frame('answer', { type: 'answer', text: '47 rows' }),
+        frame('done', { type: 'done', model: 'claude' }),
+      ),
+    );
+
+    const result = await clientWith(fetchImpl).askMessages(transcript);
+    expect(result.kind).toBe('answer');
+    expect(result.text).toBe('47 rows');
+    // One statement, not two: the query and result events describe the same one.
+    expect(result.queries).toHaveLength(1);
+    expect(result.queries[0]?.row_count).toBe(47);
+  });
+
+  it('emits no conversation_id, which is what makes it stateless', async () => {
+    const fetchImpl = mockFetch(
+      sseResponse(
+        frame('answer', { type: 'answer', text: 'ok' }),
+        frame('done', { type: 'done', model: 'claude' }),
+      ),
+    );
+    const result = await clientWith(fetchImpl).askMessages(transcript);
+    expect(result.conversation_id).toBeUndefined();
+  });
+});
