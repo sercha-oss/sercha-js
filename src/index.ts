@@ -85,6 +85,7 @@ export {
   type GenieConversationDetail,
   type GenieEvent,
   type GenieEventType,
+  type GenieMessage,
   type GenieQuery,
   type GenieTurn,
   type GenieTurnResult,
