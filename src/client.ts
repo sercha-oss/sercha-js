@@ -7,6 +7,8 @@ import { GenieResource } from './resources/genie.js';
 import { CatalogueResource } from './resources/catalogue.js';
 import { LedgerResource } from './resources/ledger.js';
 import { SearchResource } from './resources/search.js';
+import { StructuresResource } from './resources/structures.js';
+import { SyncResource } from './resources/sync.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
 import type {
   GenieConversation,
@@ -25,6 +27,21 @@ import type {
   LedgerRecordType,
   ListLedgerRecordsQuery,
 } from './types/ledger.js';
+import type {
+  AssignDocumentRequest,
+  AssignDocumentResponse,
+  CorpusStructure,
+  RerunStructureRequest,
+  RerunStructureResponse,
+  StructureTray,
+} from './types/structures.js';
+import type {
+  PushDocumentsRequest,
+  PushDocumentsResponse,
+  SourceSyncState,
+  SyncAccepted,
+  WaitForIngestOptions,
+} from './types/sync.js';
 
 /**
  * The client's capability surface.
@@ -111,6 +128,39 @@ export interface Sercha {
   getRecord(id: string): Promise<LedgerRecord>;
   listRecords(query?: ListLedgerRecordsQuery): Promise<LedgerRecord[]>;
   subjectHistory(subjectKey: string): Promise<LedgerRecord[]>;
+
+  /**
+   * Pack Builder: the structure of a corpus organised into packs.
+   *
+   * On the interface, not only the concrete client, because pack review is an
+   * application surface: a review UI reads the tree and the tray, records the
+   * human's placements, and asks the agent to regroup — it cannot exist
+   * without these, and it should be buildable against a stub. All four are
+   * admin-gated (403 for a default service account, degrade gracefully), and a
+   * corpus that does not organise by structure answers 409.
+   */
+  structure(corpusId: string): Promise<CorpusStructure>;
+  structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray>;
+  assignDocument(corpusId: string, req: AssignDocumentRequest): Promise<AssignDocumentResponse>;
+  rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse>;
+
+  /**
+   * Source sync and document push.
+   *
+   * On the interface because these are application surfaces, not admin
+   * plumbing: an ingest UI is push-then-poll (pushDocuments + waitForIngest —
+   * acceptance is not indexing, so without the poll the first search after a
+   * push silently misses the document), and an ops page exists to surface the
+   * sync `warning` field, which flags a sync that "succeeded" while almost
+   * certainly misconfigured. Both should be buildable against a stub.
+   * triggerSync and pushDocuments are admin/write-gated (403 for a default
+   * service account, degrade gracefully); reading state is not.
+   */
+  triggerSync(sourceId: string): Promise<SyncAccepted>;
+  syncState(sourceId: string): Promise<SourceSyncState>;
+  syncStates(): Promise<SourceSyncState[]>;
+  pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse>;
+  waitForIngest(documentIds: string[], opts?: WaitForIngestOptions): Promise<Document[]>;
 }
 
 /**
@@ -135,6 +185,8 @@ export class SerchaClient implements Sercha {
   readonly catalogue: CatalogueResource;
   readonly ledger: LedgerResource;
   readonly documents: SearchResource;
+  readonly structures: StructuresResource;
+  readonly sync: SyncResource;
 
   private readonly transport: HttpTransport;
 
@@ -149,6 +201,8 @@ export class SerchaClient implements Sercha {
     this.catalogue = new CatalogueResource(this.transport);
     this.ledger = new LedgerResource(this.transport);
     this.documents = new SearchResource(this.transport);
+    this.structures = new StructuresResource(this.transport);
+    this.sync = new SyncResource(this.transport);
   }
 
   // Shorthands for the common operations. The resource objects above remain
@@ -256,6 +310,42 @@ export class SerchaClient implements Sercha {
 
   subjectHistory(subjectKey: string): Promise<LedgerRecord[]> {
     return this.ledger.subjectHistory(subjectKey);
+  }
+
+  structure(corpusId: string): Promise<CorpusStructure> {
+    return this.structures.structure(corpusId);
+  }
+
+  structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray> {
+    return this.structures.structureTray(corpusId, opts);
+  }
+
+  assignDocument(corpusId: string, req: AssignDocumentRequest): Promise<AssignDocumentResponse> {
+    return this.structures.assignDocument(corpusId, req);
+  }
+
+  rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse> {
+    return this.structures.rerunStructure(corpusId, req);
+  }
+
+  triggerSync(sourceId: string): Promise<SyncAccepted> {
+    return this.sync.triggerSync(sourceId);
+  }
+
+  syncState(sourceId: string): Promise<SourceSyncState> {
+    return this.sync.syncState(sourceId);
+  }
+
+  syncStates(): Promise<SourceSyncState[]> {
+    return this.sync.syncStates();
+  }
+
+  pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse> {
+    return this.sync.pushDocuments(sourceId, req);
+  }
+
+  waitForIngest(documentIds: string[], opts?: WaitForIngestOptions): Promise<Document[]> {
+    return this.sync.waitForIngest(documentIds, opts);
   }
 
   /**

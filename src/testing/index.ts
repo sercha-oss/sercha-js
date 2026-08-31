@@ -40,6 +40,29 @@ import type {
   LedgerRecordType,
   ListLedgerRecordsQuery,
 } from '../types/ledger.js';
+import type {
+  AssignDocumentRequest,
+  AssignDocumentResponse,
+  CorpusStructure,
+  RerunStructureRequest,
+  RerunStructureResponse,
+  StructureAssignmentEvent,
+  StructurePack,
+  StructureState,
+  StructureTray,
+  StructureTrayEntry,
+  StructureTrayGroup,
+} from '../types/structures.js';
+import { SerchaTimeoutError } from '../transport/errors.js';
+import type {
+  IngestStatus,
+  PushDocumentsRequest,
+  PushDocumentsResponse,
+  SourceSyncState,
+  SyncAccepted,
+  WaitForIngestOptions,
+} from '../types/sync.js';
+import { isTerminalIngestStatus } from '../types/sync.js';
 
 /** Resolves a statement to rows. Receives the statement with LIMIT/OFFSET applied. */
 export type QueryHandler = (serchaql: string) => QueryRow[] | Promise<QueryRow[]>;
@@ -65,8 +88,49 @@ export interface StubSerchaOptions {
   entityProperties?: Record<string, CatalogueProperty[]>;
   /** Genie turn responses keyed by message text. */
   genie?: Record<string, GenieTurnResult>;
+  /**
+   * Corpus structures keyed by corpus id, for the Pack Builder surface.
+   *
+   * A corpus absent here answers 409, exactly as a real corpus that does not
+   * organise by structure would — so the graceful-degrade path an application
+   * needs is exercisable against the stub.
+   */
+  structures?: Record<string, StubStructureFixture>;
+  /**
+   * Sync states returned by syncState()/syncStates().
+   *
+   * When omitted the stub supplies defaults that include one state with a
+   * non-null `warning`, so the ops path that renders warnings is exercised by
+   * default rather than only when someone remembers to configure it.
+   */
+  syncStates?: SourceSyncState[];
+  /**
+   * Polls before a pushed document flips from 'processing' to 'indexed'.
+   * Default 2, so waitForIngest observes 'processing' at least once and then
+   * completes — a deterministic tick, no time mocks. Zero or negative disables
+   * automatic promotion; promote explicitly with stubIndexDocuments(), or do
+   * not, to drive the timeout path.
+   */
+  indexAfterPolls?: number;
   /** Artificial latency in ms, to surface races that a zero-latency stub hides. */
   latencyMs?: number;
+}
+
+/** Fixture for one corpus's structure. */
+export interface StubStructureFixture {
+  packs: StructurePack[];
+  /** Documents waiting for a human. Consumed as assignDocument places them. */
+  tray?: StructureTrayEntry[];
+  structure_ref?: string;
+  /** Defaults to needs_review while the tray has entries, fresh after. */
+  structure_state?: StructureState;
+}
+
+/** The stub's view of one corpus's structure, for assertions. */
+export interface StubStructureState {
+  assignments: Record<string, { container_id: string; locked: boolean }>;
+  events: StructureAssignmentEvent[];
+  tray: StructureTrayEntry[];
 }
 
 /**
@@ -154,6 +218,22 @@ export class StubSercha implements Sercha {
    */
   async getDocument(documentId: string, _signal?: AbortSignal): Promise<Document> {
     await this.delay();
+    const pushed = this.pushedDocuments.get(documentId);
+    if (pushed) {
+      // Each read is one ingest tick: after indexAfterPolls of them the
+      // document promotes, which is what makes waitForIngest terminate
+      // deterministically with no time mocks.
+      pushed.polls += 1;
+      const threshold = this.options.indexAfterPolls ?? 2;
+      if (
+        threshold > 0 &&
+        pushed.polls >= threshold &&
+        pushed.document.ingest_status === 'processing'
+      ) {
+        pushed.document = { ...pushed.document, ingest_status: 'indexed' };
+      }
+      return pushed.document;
+    }
     const found = this.options.documents?.[documentId];
     if (!found) {
       throw new Error(
@@ -390,6 +470,270 @@ export class StubSercha implements Sercha {
     return written;
   }
 
+  /**
+   * Pack Builder, backed by memory.
+   *
+   * Working lock semantics rather than no-ops, because the behaviour worth
+   * testing IS the locking: a human placement survives an agent rerun, a tray
+   * entry disappears once resolved, and a second human can re-repair without
+   * unlocking. A stub returning canned objects would let a review UI pass its
+   * tests and then lose a human's work on the first real rerun.
+   *
+   * There is no agent in the stub, so every assignDocument is the human path
+   * and locks. rerunStructure is the agent path, and it leaves locked
+   * assignments untouched — which, with no agent, means it changes nothing.
+   */
+  private readonly structureStates = new Map<string, StubStructureState>();
+  private structureSeq = 0;
+
+  async structure(corpusId: string): Promise<CorpusStructure> {
+    await this.delay();
+    const fixture = this.structureFixture(corpusId);
+    const state = this.structureState(corpusId);
+    return {
+      corpus_id: corpusId,
+      structure_ref: fixture.structure_ref ?? `stub-structure-${corpusId}`,
+      structure_state:
+        fixture.structure_state ?? (state.tray.length > 0 ? 'needs_review' : 'fresh'),
+      tray_count: state.tray.length,
+      packs: fixture.packs,
+    };
+  }
+
+  async structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    const entries = [...this.structureState(corpusId).tray];
+    if (opts?.groupBy !== 'candidate') return { entries };
+
+    const groups = new Map<string, StructureTrayGroup>();
+    for (const entry of entries) {
+      const payload = entry.flag_payload as { candidate?: unknown } | null | undefined;
+      const candidate = typeof payload?.candidate === 'string' ? payload.candidate : 'none';
+      const group = groups.get(candidate) ?? { candidate, entries: [] };
+      group.entries.push(entry);
+      groups.set(candidate, group);
+    }
+    return { entries, groups: [...groups.values()] };
+  }
+
+  async assignDocument(
+    corpusId: string,
+    req: AssignDocumentRequest,
+  ): Promise<AssignDocumentResponse> {
+    await this.delay();
+    const fixture = this.structureFixture(corpusId);
+    const state = this.structureState(corpusId);
+
+    const pack =
+      'container_id' in req
+        ? findPack(fixture.packs, req.container_id)
+        : findPackByLevels(fixture.packs, req.level_values);
+    if (!pack) {
+      const target = 'container_id' in req ? req.container_id : req.level_values.join('/');
+      throw new SerchaHttpError(404, `StubSercha: no pack ${target} in corpus ${corpusId}.`);
+    }
+
+    // Locked assignments are still re-assignable here: locks stop the agent,
+    // not a human, and every stub caller is the human path. The assignment
+    // stays locked afterwards so a rerun cannot undo the repair either way.
+    state.assignments[req.document_id] = { container_id: pack.id, locked: true };
+
+    const event: StructureAssignmentEvent = {
+      id: `stub-assignment-${++this.structureSeq}`,
+      document_id: req.document_id,
+      container_id: pack.id,
+      actor: 'human',
+      rationale: req.rationale ?? null,
+      created_at: new Date(0).toISOString(),
+    };
+    state.events.push(event);
+
+    // The tray entry is consumed: it existed because the document had no
+    // confident home, and now it has one.
+    state.tray = state.tray.filter((entry) => entry.document_id !== req.document_id);
+
+    return { event, container_id: pack.id, locked: true, partition_key: pack.slug };
+  }
+
+  /** Returns a fake queued run and touches nothing: locked assignments survive. */
+  async rerunStructure(
+    corpusId: string,
+    req: RerunStructureRequest = {},
+  ): Promise<RerunStructureResponse> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    return {
+      run_id: `stub-structure-run-${++this.structureSeq}`,
+      status: 'queued',
+      pipeline_id: 'stub-structure-pipeline',
+      trigger_kind: 'manual',
+      ...(req.document_ids ? { document_ids: req.document_ids } : {}),
+    };
+  }
+
+  /** The stub's assignment/tray state for a corpus, for assertions. */
+  stubStructureState(corpusId: string): StubStructureState {
+    this.structureFixture(corpusId);
+    return this.structureState(corpusId);
+  }
+
+  private structureFixture(corpusId: string): StubStructureFixture {
+    const fixture = this.options.structures?.[corpusId];
+    if (!fixture) {
+      // The same answer a real non-structure corpus gives, so an application's
+      // degrade-on-409 path is what a missing fixture exercises.
+      throw new SerchaHttpError(409, `Corpus ${corpusId} does not organise by structure.`, {
+        code: 'corpus_not_structured',
+      });
+    }
+    return fixture;
+  }
+
+  private structureState(corpusId: string): StubStructureState {
+    let state = this.structureStates.get(corpusId);
+    if (!state) {
+      state = {
+        assignments: {},
+        events: [],
+        tray: [...(this.options.structures?.[corpusId]?.tray ?? [])],
+      };
+      this.structureStates.set(corpusId, state);
+    }
+    return state;
+  }
+
+  /**
+   * Sync and push, backed by memory.
+   *
+   * Pushed documents genuinely pass through 'processing' before 'indexed',
+   * because acceptance-is-not-indexing is the behaviour worth testing: an
+   * application that searches immediately after pushDocuments() resolves
+   * should see that miss against the stub too, not first in production.
+   * Promotion is a deterministic poll count (see indexAfterPolls), so
+   * waitForIngest is testable without time mocks.
+   */
+  private readonly pushedDocuments = new Map<string, { document: Document; polls: number }>();
+  private syncSeq = 0;
+
+  async triggerSync(sourceId: string): Promise<SyncAccepted> {
+    await this.delay();
+    return { status: 'accepted', source_id: sourceId, task_id: `stub-sync-task-${++this.syncSeq}` };
+  }
+
+  async syncState(sourceId: string): Promise<SourceSyncState> {
+    await this.delay();
+    const configured = this.stubSyncStates().find((s) => s.source_id === sourceId);
+    return configured ?? { source_id: sourceId, status: 'idle', last_sync_at: null, warning: null };
+  }
+
+  async syncStates(): Promise<SourceSyncState[]> {
+    await this.delay();
+    return this.stubSyncStates();
+  }
+
+  async pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse> {
+    await this.delay();
+    const results = req.documents.map((doc) => {
+      const id = `stub-doc-${++this.syncSeq}`;
+      this.pushedDocuments.set(id, {
+        polls: 0,
+        document: {
+          id,
+          source_id: sourceId,
+          title: doc.title,
+          path: doc.path,
+          mime_type: doc.mime_type,
+          indexed_at: new Date(0).toISOString(),
+          ingest_status: 'processing',
+        },
+      });
+      return {
+        document_id: id,
+        external_id: doc.external_id,
+        ingest_status: 'processing' as IngestStatus,
+      };
+    });
+    return { results };
+  }
+
+  /**
+   * Poll counting stands in for time: the budget is a fixed number of polls
+   * rather than a wall clock, so the timeout path is reachable in a test
+   * without faking timers — configure indexAfterPolls <= 0 and the pending
+   * ids are named in the error, exactly as the real client names them.
+   */
+  async waitForIngest(documentIds: string[], opts: WaitForIngestOptions = {}): Promise<Document[]> {
+    const maxPolls = 25;
+    const settled = new Map<string, Document>();
+    let pending = [...documentIds];
+
+    for (let poll = 0; poll < maxPolls; poll++) {
+      const still: string[] = [];
+      for (const id of pending) {
+        const document = await this.getDocument(id);
+        if (!document.ingest_status || isTerminalIngestStatus(document.ingest_status)) {
+          settled.set(id, document);
+        } else {
+          still.push(id);
+        }
+      }
+      pending = still;
+      if (pending.length === 0) {
+        return documentIds.map((id) => settled.get(id)!);
+      }
+    }
+
+    const timeoutMs = opts.timeoutMs ?? 0;
+    throw new SerchaTimeoutError(
+      timeoutMs,
+      `Ingest did not complete within ${timeoutMs}ms; still pending: ` +
+        `${pending.join(', ')}. Ingest continues server-side, so these ids ` +
+        'remain valid for a later check.',
+    );
+  }
+
+  /**
+   * Promote pushed documents to a terminal state immediately.
+   *
+   * The explicit tick, for tests that want to control exactly when ingest
+   * completes — or to drive the failed path, which automatic promotion never
+   * produces.
+   */
+  stubIndexDocuments(documentIds?: string[], status: IngestStatus = 'indexed'): void {
+    for (const [id, pushed] of this.pushedDocuments) {
+      if (documentIds && !documentIds.includes(id)) continue;
+      if (pushed.document.ingest_status === 'processing') {
+        pushed.document = { ...pushed.document, ingest_status: status };
+      }
+    }
+  }
+
+  private stubSyncStates(): SourceSyncState[] {
+    return (
+      this.options.syncStates ?? [
+        {
+          source_id: 'stub-source-1',
+          status: 'completed',
+          last_sync_at: new Date(0).toISOString(),
+          warning: null,
+          document_count: 12,
+        },
+        {
+          source_id: 'stub-source-2',
+          status: 'completed',
+          last_sync_at: new Date(0).toISOString(),
+          // A default state carries a warning so an ops page renders the
+          // warning path without anyone remembering to configure it.
+          warning:
+            'sync enumerated zero documents over a source with zero local ' +
+            'documents; this is almost always a misconfigured root or a stale cursor',
+          document_count: 0,
+        },
+      ]
+    );
+  }
+
   private async resolve(serchaql: string): Promise<QueryRow[]> {
     const exact = this.options.queries?.[serchaql];
     if (exact) return exact;
@@ -417,6 +761,27 @@ export class StubSercha implements Sercha {
  * transcript is context. Falls back to the final message so a malformed
  * transcript still produces a deterministic lookup rather than throwing.
  */
+function findPack(packs: StructurePack[], id: string): StructurePack | undefined {
+  for (const pack of packs) {
+    if (pack.id === id) return pack;
+    const inChildren = findPack(pack.children, id);
+    if (inChildren) return inChildren;
+  }
+  return undefined;
+}
+
+/** Walk one level per value, matching slug or display name at each. */
+function findPackByLevels(packs: StructurePack[], levels: string[]): StructurePack | undefined {
+  let current: StructurePack | undefined;
+  let candidates = packs;
+  for (const value of levels) {
+    current = candidates.find((p) => p.slug === value || p.display_name === value);
+    if (!current) return undefined;
+    candidates = current.children;
+  }
+  return current;
+}
+
 function lastUserMessage(messages: GenieMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i]?.role === 'user') return messages[i]!.content;

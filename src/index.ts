@@ -48,6 +48,8 @@ export { GenieResource, type StreamOptions } from './resources/genie.js';
 export { CatalogueResource } from './resources/catalogue.js';
 export { LedgerResource } from './resources/ledger.js';
 export { SearchResource } from './resources/search.js';
+export { StructuresResource } from './resources/structures.js';
+export { SyncResource } from './resources/sync.js';
 
 export type {
   CellValue,
@@ -126,3 +128,32 @@ export type {
   LedgerValueType,
   ListLedgerRecordsQuery,
 } from './types/ledger.js';
+
+export type {
+  AssignDocumentRequest,
+  AssignDocumentResponse,
+  CorpusStructure,
+  RerunStructureRequest,
+  RerunStructureResponse,
+  StructureActor,
+  StructureAssignmentEvent,
+  StructurePack,
+  StructureState,
+  StructureTray,
+  StructureTrayEntry,
+  StructureTrayFlag,
+  StructureTrayGroup,
+} from './types/structures.js';
+
+export {
+  isTerminalIngestStatus,
+  TERMINAL_INGEST_STATUSES,
+  type IngestStatus,
+  type PushDocument,
+  type PushDocumentResult,
+  type PushDocumentsRequest,
+  type PushDocumentsResponse,
+  type SourceSyncState,
+  type SyncAccepted,
+  type WaitForIngestOptions,
+} from './types/sync.js';
