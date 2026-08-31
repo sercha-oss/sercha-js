@@ -104,8 +104,14 @@ export class SerchaDecodeError extends SerchaError {
 export class SerchaTimeoutError extends SerchaError {
   readonly timeoutMs: number;
 
-  constructor(timeoutMs: number) {
-    super(`Request timed out after ${timeoutMs}ms`);
+  /**
+   * `detail` replaces the generic message where the caller knows what was
+   * being waited for — waitForIngest names the still-pending document ids, so
+   * the error alone says what to check later rather than only that time ran
+   * out.
+   */
+  constructor(timeoutMs: number, detail?: string) {
+    super(detail ?? `Request timed out after ${timeoutMs}ms`);
     this.name = 'SerchaTimeoutError';
     this.timeoutMs = timeoutMs;
   }

@@ -8,6 +8,7 @@ import { CatalogueResource } from './resources/catalogue.js';
 import { LedgerResource } from './resources/ledger.js';
 import { SearchResource } from './resources/search.js';
 import { StructuresResource } from './resources/structures.js';
+import { SyncResource } from './resources/sync.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
 import type {
   GenieConversation,
@@ -34,6 +35,13 @@ import type {
   RerunStructureResponse,
   StructureTray,
 } from './types/structures.js';
+import type {
+  PushDocumentsRequest,
+  PushDocumentsResponse,
+  SourceSyncState,
+  SyncAccepted,
+  WaitForIngestOptions,
+} from './types/sync.js';
 
 /**
  * The client's capability surface.
@@ -135,6 +143,24 @@ export interface Sercha {
   structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray>;
   assignDocument(corpusId: string, req: AssignDocumentRequest): Promise<AssignDocumentResponse>;
   rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse>;
+
+  /**
+   * Source sync and document push.
+   *
+   * On the interface because these are application surfaces, not admin
+   * plumbing: an ingest UI is push-then-poll (pushDocuments + waitForIngest —
+   * acceptance is not indexing, so without the poll the first search after a
+   * push silently misses the document), and an ops page exists to surface the
+   * sync `warning` field, which flags a sync that "succeeded" while almost
+   * certainly misconfigured. Both should be buildable against a stub.
+   * triggerSync and pushDocuments are admin/write-gated (403 for a default
+   * service account, degrade gracefully); reading state is not.
+   */
+  triggerSync(sourceId: string): Promise<SyncAccepted>;
+  syncState(sourceId: string): Promise<SourceSyncState>;
+  syncStates(): Promise<SourceSyncState[]>;
+  pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse>;
+  waitForIngest(documentIds: string[], opts?: WaitForIngestOptions): Promise<Document[]>;
 }
 
 /**
@@ -160,6 +186,7 @@ export class SerchaClient implements Sercha {
   readonly ledger: LedgerResource;
   readonly documents: SearchResource;
   readonly structures: StructuresResource;
+  readonly sync: SyncResource;
 
   private readonly transport: HttpTransport;
 
@@ -175,6 +202,7 @@ export class SerchaClient implements Sercha {
     this.ledger = new LedgerResource(this.transport);
     this.documents = new SearchResource(this.transport);
     this.structures = new StructuresResource(this.transport);
+    this.sync = new SyncResource(this.transport);
   }
 
   // Shorthands for the common operations. The resource objects above remain
@@ -298,6 +326,26 @@ export class SerchaClient implements Sercha {
 
   rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse> {
     return this.structures.rerunStructure(corpusId, req);
+  }
+
+  triggerSync(sourceId: string): Promise<SyncAccepted> {
+    return this.sync.triggerSync(sourceId);
+  }
+
+  syncState(sourceId: string): Promise<SourceSyncState> {
+    return this.sync.syncState(sourceId);
+  }
+
+  syncStates(): Promise<SourceSyncState[]> {
+    return this.sync.syncStates();
+  }
+
+  pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse> {
+    return this.sync.pushDocuments(sourceId, req);
+  }
+
+  waitForIngest(documentIds: string[], opts?: WaitForIngestOptions): Promise<Document[]> {
+    return this.sync.waitForIngest(documentIds, opts);
   }
 
   /**

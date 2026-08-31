@@ -53,6 +53,16 @@ import type {
   StructureTrayEntry,
   StructureTrayGroup,
 } from '../types/structures.js';
+import { SerchaTimeoutError } from '../transport/errors.js';
+import type {
+  IngestStatus,
+  PushDocumentsRequest,
+  PushDocumentsResponse,
+  SourceSyncState,
+  SyncAccepted,
+  WaitForIngestOptions,
+} from '../types/sync.js';
+import { isTerminalIngestStatus } from '../types/sync.js';
 
 /** Resolves a statement to rows. Receives the statement with LIMIT/OFFSET applied. */
 export type QueryHandler = (serchaql: string) => QueryRow[] | Promise<QueryRow[]>;
@@ -86,6 +96,22 @@ export interface StubSerchaOptions {
    * needs is exercisable against the stub.
    */
   structures?: Record<string, StubStructureFixture>;
+  /**
+   * Sync states returned by syncState()/syncStates().
+   *
+   * When omitted the stub supplies defaults that include one state with a
+   * non-null `warning`, so the ops path that renders warnings is exercised by
+   * default rather than only when someone remembers to configure it.
+   */
+  syncStates?: SourceSyncState[];
+  /**
+   * Polls before a pushed document flips from 'processing' to 'indexed'.
+   * Default 2, so waitForIngest observes 'processing' at least once and then
+   * completes — a deterministic tick, no time mocks. Zero or negative disables
+   * automatic promotion; promote explicitly with stubIndexDocuments(), or do
+   * not, to drive the timeout path.
+   */
+  indexAfterPolls?: number;
   /** Artificial latency in ms, to surface races that a zero-latency stub hides. */
   latencyMs?: number;
 }
@@ -192,6 +218,22 @@ export class StubSercha implements Sercha {
    */
   async getDocument(documentId: string, _signal?: AbortSignal): Promise<Document> {
     await this.delay();
+    const pushed = this.pushedDocuments.get(documentId);
+    if (pushed) {
+      // Each read is one ingest tick: after indexAfterPolls of them the
+      // document promotes, which is what makes waitForIngest terminate
+      // deterministically with no time mocks.
+      pushed.polls += 1;
+      const threshold = this.options.indexAfterPolls ?? 2;
+      if (
+        threshold > 0 &&
+        pushed.polls >= threshold &&
+        pushed.document.ingest_status === 'processing'
+      ) {
+        pushed.document = { ...pushed.document, ingest_status: 'indexed' };
+      }
+      return pushed.document;
+    }
     const found = this.options.documents?.[documentId];
     if (!found) {
       throw new Error(
@@ -559,6 +601,137 @@ export class StubSercha implements Sercha {
       this.structureStates.set(corpusId, state);
     }
     return state;
+  }
+
+  /**
+   * Sync and push, backed by memory.
+   *
+   * Pushed documents genuinely pass through 'processing' before 'indexed',
+   * because acceptance-is-not-indexing is the behaviour worth testing: an
+   * application that searches immediately after pushDocuments() resolves
+   * should see that miss against the stub too, not first in production.
+   * Promotion is a deterministic poll count (see indexAfterPolls), so
+   * waitForIngest is testable without time mocks.
+   */
+  private readonly pushedDocuments = new Map<string, { document: Document; polls: number }>();
+  private syncSeq = 0;
+
+  async triggerSync(sourceId: string): Promise<SyncAccepted> {
+    await this.delay();
+    return { status: 'accepted', source_id: sourceId, task_id: `stub-sync-task-${++this.syncSeq}` };
+  }
+
+  async syncState(sourceId: string): Promise<SourceSyncState> {
+    await this.delay();
+    const configured = this.stubSyncStates().find((s) => s.source_id === sourceId);
+    return configured ?? { source_id: sourceId, status: 'idle', last_sync_at: null, warning: null };
+  }
+
+  async syncStates(): Promise<SourceSyncState[]> {
+    await this.delay();
+    return this.stubSyncStates();
+  }
+
+  async pushDocuments(sourceId: string, req: PushDocumentsRequest): Promise<PushDocumentsResponse> {
+    await this.delay();
+    const results = req.documents.map((doc) => {
+      const id = `stub-doc-${++this.syncSeq}`;
+      this.pushedDocuments.set(id, {
+        polls: 0,
+        document: {
+          id,
+          source_id: sourceId,
+          title: doc.title,
+          path: doc.path,
+          mime_type: doc.mime_type,
+          indexed_at: new Date(0).toISOString(),
+          ingest_status: 'processing',
+        },
+      });
+      return {
+        document_id: id,
+        external_id: doc.external_id,
+        ingest_status: 'processing' as IngestStatus,
+      };
+    });
+    return { results };
+  }
+
+  /**
+   * Poll counting stands in for time: the budget is a fixed number of polls
+   * rather than a wall clock, so the timeout path is reachable in a test
+   * without faking timers — configure indexAfterPolls <= 0 and the pending
+   * ids are named in the error, exactly as the real client names them.
+   */
+  async waitForIngest(documentIds: string[], opts: WaitForIngestOptions = {}): Promise<Document[]> {
+    const maxPolls = 25;
+    const settled = new Map<string, Document>();
+    let pending = [...documentIds];
+
+    for (let poll = 0; poll < maxPolls; poll++) {
+      const still: string[] = [];
+      for (const id of pending) {
+        const document = await this.getDocument(id);
+        if (!document.ingest_status || isTerminalIngestStatus(document.ingest_status)) {
+          settled.set(id, document);
+        } else {
+          still.push(id);
+        }
+      }
+      pending = still;
+      if (pending.length === 0) {
+        return documentIds.map((id) => settled.get(id)!);
+      }
+    }
+
+    const timeoutMs = opts.timeoutMs ?? 0;
+    throw new SerchaTimeoutError(
+      timeoutMs,
+      `Ingest did not complete within ${timeoutMs}ms; still pending: ` +
+        `${pending.join(', ')}. Ingest continues server-side, so these ids ` +
+        'remain valid for a later check.',
+    );
+  }
+
+  /**
+   * Promote pushed documents to a terminal state immediately.
+   *
+   * The explicit tick, for tests that want to control exactly when ingest
+   * completes — or to drive the failed path, which automatic promotion never
+   * produces.
+   */
+  stubIndexDocuments(documentIds?: string[], status: IngestStatus = 'indexed'): void {
+    for (const [id, pushed] of this.pushedDocuments) {
+      if (documentIds && !documentIds.includes(id)) continue;
+      if (pushed.document.ingest_status === 'processing') {
+        pushed.document = { ...pushed.document, ingest_status: status };
+      }
+    }
+  }
+
+  private stubSyncStates(): SourceSyncState[] {
+    return (
+      this.options.syncStates ?? [
+        {
+          source_id: 'stub-source-1',
+          status: 'completed',
+          last_sync_at: new Date(0).toISOString(),
+          warning: null,
+          document_count: 12,
+        },
+        {
+          source_id: 'stub-source-2',
+          status: 'completed',
+          last_sync_at: new Date(0).toISOString(),
+          // A default state carries a warning so an ops page renders the
+          // warning path without anyone remembering to configure it.
+          warning:
+            'sync enumerated zero documents over a source with zero local ' +
+            'documents; this is almost always a misconfigured root or a stale cursor',
+          document_count: 0,
+        },
+      ]
+    );
   }
 
   private async resolve(serchaql: string): Promise<QueryRow[]> {

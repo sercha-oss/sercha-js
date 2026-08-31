@@ -1,5 +1,7 @@
 /** Retrieval types for POST /api/v1/search. */
 
+import type { IngestStatus } from './sync.js';
+
 export interface SearchRequest {
   query: string;
   mode?: 'hybrid' | 'text' | 'semantic';
@@ -47,6 +49,12 @@ export interface Document {
   mime_type: string;
   body?: string;
   indexed_at: string;
+  /**
+   * Where an asynchronously ingested document is in the pipeline. Absent on
+   * older servers; treat absence as indexed, since only push-ingested
+   * documents pass through a processing phase.
+   */
+  ingest_status?: IngestStatus;
   metadata?: Record<string, unknown>;
 }
 
