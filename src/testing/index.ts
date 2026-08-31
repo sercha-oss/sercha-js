@@ -40,6 +40,19 @@ import type {
   LedgerRecordType,
   ListLedgerRecordsQuery,
 } from '../types/ledger.js';
+import type {
+  AssignDocumentRequest,
+  AssignDocumentResponse,
+  CorpusStructure,
+  RerunStructureRequest,
+  RerunStructureResponse,
+  StructureAssignmentEvent,
+  StructurePack,
+  StructureState,
+  StructureTray,
+  StructureTrayEntry,
+  StructureTrayGroup,
+} from '../types/structures.js';
 
 /** Resolves a statement to rows. Receives the statement with LIMIT/OFFSET applied. */
 export type QueryHandler = (serchaql: string) => QueryRow[] | Promise<QueryRow[]>;
@@ -65,8 +78,33 @@ export interface StubSerchaOptions {
   entityProperties?: Record<string, CatalogueProperty[]>;
   /** Genie turn responses keyed by message text. */
   genie?: Record<string, GenieTurnResult>;
+  /**
+   * Corpus structures keyed by corpus id, for the Pack Builder surface.
+   *
+   * A corpus absent here answers 409, exactly as a real corpus that does not
+   * organise by structure would — so the graceful-degrade path an application
+   * needs is exercisable against the stub.
+   */
+  structures?: Record<string, StubStructureFixture>;
   /** Artificial latency in ms, to surface races that a zero-latency stub hides. */
   latencyMs?: number;
+}
+
+/** Fixture for one corpus's structure. */
+export interface StubStructureFixture {
+  packs: StructurePack[];
+  /** Documents waiting for a human. Consumed as assignDocument places them. */
+  tray?: StructureTrayEntry[];
+  structure_ref?: string;
+  /** Defaults to needs_review while the tray has entries, fresh after. */
+  structure_state?: StructureState;
+}
+
+/** The stub's view of one corpus's structure, for assertions. */
+export interface StubStructureState {
+  assignments: Record<string, { container_id: string; locked: boolean }>;
+  events: StructureAssignmentEvent[];
+  tray: StructureTrayEntry[];
 }
 
 /**
@@ -390,6 +428,139 @@ export class StubSercha implements Sercha {
     return written;
   }
 
+  /**
+   * Pack Builder, backed by memory.
+   *
+   * Working lock semantics rather than no-ops, because the behaviour worth
+   * testing IS the locking: a human placement survives an agent rerun, a tray
+   * entry disappears once resolved, and a second human can re-repair without
+   * unlocking. A stub returning canned objects would let a review UI pass its
+   * tests and then lose a human's work on the first real rerun.
+   *
+   * There is no agent in the stub, so every assignDocument is the human path
+   * and locks. rerunStructure is the agent path, and it leaves locked
+   * assignments untouched — which, with no agent, means it changes nothing.
+   */
+  private readonly structureStates = new Map<string, StubStructureState>();
+  private structureSeq = 0;
+
+  async structure(corpusId: string): Promise<CorpusStructure> {
+    await this.delay();
+    const fixture = this.structureFixture(corpusId);
+    const state = this.structureState(corpusId);
+    return {
+      corpus_id: corpusId,
+      structure_ref: fixture.structure_ref ?? `stub-structure-${corpusId}`,
+      structure_state:
+        fixture.structure_state ?? (state.tray.length > 0 ? 'needs_review' : 'fresh'),
+      tray_count: state.tray.length,
+      packs: fixture.packs,
+    };
+  }
+
+  async structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    const entries = [...this.structureState(corpusId).tray];
+    if (opts?.groupBy !== 'candidate') return { entries };
+
+    const groups = new Map<string, StructureTrayGroup>();
+    for (const entry of entries) {
+      const payload = entry.flag_payload as { candidate?: unknown } | null | undefined;
+      const candidate = typeof payload?.candidate === 'string' ? payload.candidate : 'none';
+      const group = groups.get(candidate) ?? { candidate, entries: [] };
+      group.entries.push(entry);
+      groups.set(candidate, group);
+    }
+    return { entries, groups: [...groups.values()] };
+  }
+
+  async assignDocument(
+    corpusId: string,
+    req: AssignDocumentRequest,
+  ): Promise<AssignDocumentResponse> {
+    await this.delay();
+    const fixture = this.structureFixture(corpusId);
+    const state = this.structureState(corpusId);
+
+    const pack =
+      'container_id' in req
+        ? findPack(fixture.packs, req.container_id)
+        : findPackByLevels(fixture.packs, req.level_values);
+    if (!pack) {
+      const target = 'container_id' in req ? req.container_id : req.level_values.join('/');
+      throw new SerchaHttpError(404, `StubSercha: no pack ${target} in corpus ${corpusId}.`);
+    }
+
+    // Locked assignments are still re-assignable here: locks stop the agent,
+    // not a human, and every stub caller is the human path. The assignment
+    // stays locked afterwards so a rerun cannot undo the repair either way.
+    state.assignments[req.document_id] = { container_id: pack.id, locked: true };
+
+    const event: StructureAssignmentEvent = {
+      id: `stub-assignment-${++this.structureSeq}`,
+      document_id: req.document_id,
+      container_id: pack.id,
+      actor: 'human',
+      rationale: req.rationale ?? null,
+      created_at: new Date(0).toISOString(),
+    };
+    state.events.push(event);
+
+    // The tray entry is consumed: it existed because the document had no
+    // confident home, and now it has one.
+    state.tray = state.tray.filter((entry) => entry.document_id !== req.document_id);
+
+    return { event, container_id: pack.id, locked: true, partition_key: pack.slug };
+  }
+
+  /** Returns a fake queued run and touches nothing: locked assignments survive. */
+  async rerunStructure(
+    corpusId: string,
+    req: RerunStructureRequest = {},
+  ): Promise<RerunStructureResponse> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    return {
+      run_id: `stub-structure-run-${++this.structureSeq}`,
+      status: 'queued',
+      pipeline_id: 'stub-structure-pipeline',
+      trigger_kind: 'manual',
+      ...(req.document_ids ? { document_ids: req.document_ids } : {}),
+    };
+  }
+
+  /** The stub's assignment/tray state for a corpus, for assertions. */
+  stubStructureState(corpusId: string): StubStructureState {
+    this.structureFixture(corpusId);
+    return this.structureState(corpusId);
+  }
+
+  private structureFixture(corpusId: string): StubStructureFixture {
+    const fixture = this.options.structures?.[corpusId];
+    if (!fixture) {
+      // The same answer a real non-structure corpus gives, so an application's
+      // degrade-on-409 path is what a missing fixture exercises.
+      throw new SerchaHttpError(409, `Corpus ${corpusId} does not organise by structure.`, {
+        code: 'corpus_not_structured',
+      });
+    }
+    return fixture;
+  }
+
+  private structureState(corpusId: string): StubStructureState {
+    let state = this.structureStates.get(corpusId);
+    if (!state) {
+      state = {
+        assignments: {},
+        events: [],
+        tray: [...(this.options.structures?.[corpusId]?.tray ?? [])],
+      };
+      this.structureStates.set(corpusId, state);
+    }
+    return state;
+  }
+
   private async resolve(serchaql: string): Promise<QueryRow[]> {
     const exact = this.options.queries?.[serchaql];
     if (exact) return exact;
@@ -417,6 +588,27 @@ export class StubSercha implements Sercha {
  * transcript is context. Falls back to the final message so a malformed
  * transcript still produces a deterministic lookup rather than throwing.
  */
+function findPack(packs: StructurePack[], id: string): StructurePack | undefined {
+  for (const pack of packs) {
+    if (pack.id === id) return pack;
+    const inChildren = findPack(pack.children, id);
+    if (inChildren) return inChildren;
+  }
+  return undefined;
+}
+
+/** Walk one level per value, matching slug or display name at each. */
+function findPackByLevels(packs: StructurePack[], levels: string[]): StructurePack | undefined {
+  let current: StructurePack | undefined;
+  let candidates = packs;
+  for (const value of levels) {
+    current = candidates.find((p) => p.slug === value || p.display_name === value);
+    if (!current) return undefined;
+    candidates = current.children;
+  }
+  return current;
+}
+
 function lastUserMessage(messages: GenieMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     if (messages[i]?.role === 'user') return messages[i]!.content;

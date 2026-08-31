@@ -25,7 +25,8 @@ export type CellValue = string | number | boolean | null | NestedRowSet;
  * One result row: a flat object keyed by column name.
  *
  * Entity scans also carry system columns: `_id`, `_entity_type`, `_doc`,
- * `_run_id`, `_confidence`.
+ * `_run_id`, `_confidence`, and on organised corpora `_folder` — the
+ * partition/pack key a document's rows belong to.
  */
 export type QueryRow = Record<string, CellValue>;
 
@@ -86,7 +87,8 @@ export type ObjectKind =
   | 'source'
   | 'document'
   | 'view'
-  | 'mview';
+  | 'mview'
+  | 'structure';
 
 /** Raw wire response from POST /api/v1/query. */
 export interface RawQueryResponse {
