@@ -181,3 +181,50 @@ describe('StubSercha.getDocument', () => {
     await expect(stub.getDocument('doc-2')).rejects.toThrow(/no document fixture/);
   });
 });
+
+describe('StubSercha catalogue cleanup bit', () => {
+  it('advertises structure + cleanup for corpora with a structure fixture', async () => {
+    const stub = new StubSercha({
+      catalogue: {
+        corpuses: [
+          { id: 'c-structured', name: 'deal', bindings: [] },
+          { id: 'c-plain', name: 'notes', bindings: [] },
+        ],
+      },
+      structures: {
+        'c-structured': {
+          packs: [
+            {
+              id: 'p1',
+              level_name: 'tenancy',
+              slug: 't1',
+              display_name: 'T1',
+              doc_count: 0,
+              subtree_doc_count: 0,
+              unlocked_agent_count: 0,
+              review_state: 'reviewed',
+              children: [],
+            },
+          ],
+        },
+      },
+    });
+    const tree = await stub.catalogueTree();
+    const structured = tree.corpuses.find((c) => c.id === 'c-structured');
+    const plain = tree.corpuses.find((c) => c.id === 'c-plain');
+    expect(structured?.cleanup).toBe(true);
+    expect(structured?.partition_strategy).toBe('structure');
+    expect(plain?.cleanup).toBeUndefined();
+  });
+
+  it('lets an explicit fixture value beat the derivation', async () => {
+    const stub = new StubSercha({
+      catalogue: {
+        corpuses: [{ id: 'c1', name: 'opted-out', cleanup: false, bindings: [] }],
+      },
+      structures: { c1: { packs: [] } },
+    });
+    const tree = await stub.catalogueTree();
+    expect(tree.corpuses[0]?.cleanup).toBe(false);
+  });
+});
