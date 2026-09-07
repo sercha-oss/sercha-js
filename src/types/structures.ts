@@ -28,9 +28,20 @@ export type StructureActor = 'agent' | 'mapper' | 'human';
  *
  * `multi_tenancy`: it plausibly belongs to more than one pack;
  * `duplicate_of`: it appears to duplicate a document already placed;
- * `no_pack`: no existing pack fits. Null means the entry is informational.
+ * `no_pack`: no existing pack fits;
+ * `superseded_by`: an older version whose current version is kept (Sercha
+ * 0.17+; written by a human confirmation, so it appears in the archive, not
+ * the tray). Null means the entry is informational.
  */
-export type StructureTrayFlag = 'multi_tenancy' | 'duplicate_of' | 'no_pack';
+export type StructureTrayFlag = 'multi_tenancy' | 'duplicate_of' | 'no_pack' | 'superseded_by';
+
+/**
+ * The flags a human can confirm through confirmFlag(). Identical to
+ * StructureTrayFlag today, named separately because the two vocabularies can
+ * diverge: a future tray-only flag would not automatically become
+ * confirmable.
+ */
+export type ConfirmableFlag = StructureTrayFlag;
 
 /**
  * One pack in the corpus structure. Recursive: packs nest via `children`.
@@ -93,9 +104,61 @@ export interface StructureTrayGroup {
 
 /** GET /api/v1/corpuses/{corpusId}/structure/tray. */
 export interface StructureTray {
+  corpus_id?: string;
+  count?: number;
+  /** Echoes the group_by the grouped shape was requested with. */
+  group_by?: string;
   entries: StructureTrayEntry[];
   /** Present only when the tray was requested with a group_by. */
   groups?: StructureTrayGroup[];
+}
+
+/**
+ * A human confirmation of a document's flag state: "yes, this IS a duplicate
+ * — retire it", or "this IS an old version — supersede it".
+ *
+ * A union so the compiler enforces what the server enforces: duplicate_of and
+ * superseded_by name the surviving document (a retirement naming no survivor
+ * is unauditable); the other flags do not take a target.
+ */
+export type ConfirmFlagRequest =
+  | {
+      document_id: string;
+      flag: 'duplicate_of' | 'superseded_by';
+      /** The surviving document: the primary, or the current version. */
+      target_document_id: string;
+      rationale?: string;
+    }
+  | {
+      document_id: string;
+      flag: 'multi_tenancy' | 'no_pack';
+      rationale?: string;
+    };
+
+/**
+ * POST /api/v1/corpuses/{corpusId}/structure/flags.
+ *
+ * `locked` is always true (human confirmations lock) and `partition_key` is
+ * always the unassigned sentinel: the document has left the working
+ * structure. Its row, blobs and indexes are untouched — this is
+ * retire-without-delete, reversed by a later assignDocument.
+ */
+export interface ConfirmFlagResponse {
+  event: StructureAssignmentEvent;
+  locked: boolean;
+  partition_key: string;
+}
+
+/**
+ * GET /api/v1/corpuses/{corpusId}/structure/archived: the settled
+ * retirements, as the decided complement of the tray. Entries reuse the tray
+ * shape — a document with its standing event — with the flag telling you
+ * whether it was retired as a duplicate or superseded.
+ */
+export interface StructureArchived {
+  corpus_id: string;
+  count: number;
+  entries: StructureTrayEntry[];
 }
 
 /**
@@ -111,20 +174,31 @@ export type AssignDocumentRequest =
       container_id: string;
       /** Why the human placed it here. Stored on the event for the next reviewer. */
       rationale?: string;
+      /**
+       * Accept a level value whose slug nearly matches an existing sibling
+       * pack. Without it the server refuses, because a typo'd repair would
+       * fork the pack it meant to converge on.
+       */
+      force?: boolean;
     }
   | {
       document_id: string;
       level_values: string[];
       rationale?: string;
+      force?: boolean;
     };
 
 /** The recorded assignment event. Actor comes from the caller, never the body. */
 export interface StructureAssignmentEvent {
   id: string;
   document_id: string;
-  container_id: string;
+  /** Absent on a flag-only event (a confirmation carries no container). */
+  container_id?: string;
   actor: StructureActor;
   rationale: string | null;
+  /** Present on flag events: the flag and its structured payload. */
+  flag?: StructureTrayFlag;
+  flag_payload?: unknown;
   created_at: string;
 }
 

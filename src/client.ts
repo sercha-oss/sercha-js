@@ -7,6 +7,7 @@ import { GenieResource } from './resources/genie.js';
 import { CatalogueResource } from './resources/catalogue.js';
 import { LedgerResource } from './resources/ledger.js';
 import { SearchResource } from './resources/search.js';
+import { CorpusesResource } from './resources/corpuses.js';
 import { StructuresResource } from './resources/structures.js';
 import { SyncResource } from './resources/sync.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
@@ -34,7 +35,12 @@ import type {
   RerunStructureRequest,
   RerunStructureResponse,
   StructureTray,
+  ConfirmFlagRequest,
+  ConfirmFlagResponse,
+  StructureArchived,
+  StructureTrayFlag,
 } from './types/structures.js';
+import type { CorpusDocumentsPage, CorpusPartitions } from './types/corpuses.js';
 import type {
   PushDocumentsRequest,
   PushDocumentsResponse,
@@ -140,9 +146,39 @@ export interface Sercha {
    * corpus that does not organise by structure answers 409.
    */
   structure(corpusId: string): Promise<CorpusStructure>;
-  structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray>;
+  structureTray(
+    corpusId: string,
+    opts?: { groupBy?: 'candidate'; flag?: StructureTrayFlag },
+  ): Promise<StructureTray>;
   assignDocument(corpusId: string, req: AssignDocumentRequest): Promise<AssignDocumentResponse>;
   rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse>;
+  /**
+   * Confirm a duplicate or superseded document, as the authenticated human.
+   * On the interface because it is the cleanup surface's primary write: an
+   * application that renders duplicate clusters needs the archive action
+   * beside them or the render is a dead end.
+   */
+  confirmFlag(corpusId: string, req: ConfirmFlagRequest): Promise<ConfirmFlagResponse>;
+  /**
+   * The settled retirements (the archive log). On the interface because undo
+   * needs a listing to point at, and because unlike the rest of the structure
+   * surface it works with a select grant, not admin.
+   */
+  structureArchived(corpusId: string): Promise<StructureArchived>;
+  /**
+   * A corpus's member documents with per-row partition keys. On the
+   * interface because it is the grant-scoped read a rooms UI is built from:
+   * documents, their packs, their hashes, without admin credentials.
+   */
+  corpusDocuments(
+    corpusId: string,
+    opts?: { limit?: number; offset?: number; partitionKey?: string },
+  ): Promise<CorpusDocumentsPage>;
+  /**
+   * A corpus's partition keys with counts, plus the room badge for structure
+   * corpora. On the interface as the rooms index's one call per room.
+   */
+  corpusPartitions(corpusId: string): Promise<CorpusPartitions>;
 
   /**
    * Source sync and document push.
@@ -186,6 +222,7 @@ export class SerchaClient implements Sercha {
   readonly ledger: LedgerResource;
   readonly documents: SearchResource;
   readonly structures: StructuresResource;
+  readonly corpuses: CorpusesResource;
   readonly sync: SyncResource;
 
   private readonly transport: HttpTransport;
@@ -202,6 +239,7 @@ export class SerchaClient implements Sercha {
     this.ledger = new LedgerResource(this.transport);
     this.documents = new SearchResource(this.transport);
     this.structures = new StructuresResource(this.transport);
+    this.corpuses = new CorpusesResource(this.transport);
     this.sync = new SyncResource(this.transport);
   }
 
@@ -316,7 +354,10 @@ export class SerchaClient implements Sercha {
     return this.structures.structure(corpusId);
   }
 
-  structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray> {
+  structureTray(
+    corpusId: string,
+    opts?: { groupBy?: 'candidate'; flag?: StructureTrayFlag },
+  ): Promise<StructureTray> {
     return this.structures.structureTray(corpusId, opts);
   }
 
@@ -326,6 +367,25 @@ export class SerchaClient implements Sercha {
 
   rerunStructure(corpusId: string, req?: RerunStructureRequest): Promise<RerunStructureResponse> {
     return this.structures.rerunStructure(corpusId, req);
+  }
+
+  confirmFlag(corpusId: string, req: ConfirmFlagRequest): Promise<ConfirmFlagResponse> {
+    return this.structures.confirmFlag(corpusId, req);
+  }
+
+  structureArchived(corpusId: string): Promise<StructureArchived> {
+    return this.structures.archived(corpusId);
+  }
+
+  corpusDocuments(
+    corpusId: string,
+    opts?: { limit?: number; offset?: number; partitionKey?: string },
+  ): Promise<CorpusDocumentsPage> {
+    return this.corpuses.documents(corpusId, opts);
+  }
+
+  corpusPartitions(corpusId: string): Promise<CorpusPartitions> {
+    return this.corpuses.partitions(corpusId);
   }
 
   triggerSync(sourceId: string): Promise<SyncAccepted> {

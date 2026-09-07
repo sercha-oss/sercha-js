@@ -213,6 +213,70 @@ describe('structures resource', () => {
   });
 });
 
+describe('structures 0.5.0 surface', () => {
+  it('unwraps the real 202 from rerunStructure', async () => {
+    // The 0.4.0 regression: the server answers 202, the transport tags it,
+    // and rerunStructure handed callers {status, body} with run_id
+    // undefined. This mock is a REAL 202 - the shipped test mocked 200 and
+    // hid the bug.
+    const fetch = mockFetch(
+      json({ run_id: 'run-9', status: 'queued', pipeline_id: 'p1', trigger_kind: 'manual' }, 202),
+    );
+    const client = clientWith(fetch);
+    const run = await client.rerunStructure('c1');
+    expect(run.run_id).toBe('run-9');
+    expect(run.status).toBe('queued');
+  });
+
+  it('passes the tray flag filter through', async () => {
+    const fetch = mockFetch(json({ entries: null }));
+    const client = clientWith(fetch);
+    await client.structureTray('c1', { flag: 'duplicate_of' });
+    expect(requestUrl(fetch, 0)).toContain('flag=duplicate_of');
+  });
+
+  it('posts a confirmation and returns the settled state', async () => {
+    const fetch = mockFetch(
+      json({
+        event: {
+          id: 'ev-1',
+          document_id: 'doc-1',
+          actor: 'human',
+          rationale: 'same bytes',
+          flag: 'duplicate_of',
+          flag_payload: { primary_document_id: 'doc-0' },
+          created_at: '2026-01-01T00:00:00Z',
+        },
+        locked: true,
+        partition_key: '_unassigned',
+      }),
+    );
+    const client = clientWith(fetch);
+    const result = await client.confirmFlag('c1', {
+      document_id: 'doc-1',
+      flag: 'duplicate_of',
+      target_document_id: 'doc-0',
+      rationale: 'same bytes',
+    });
+    expect(requestUrl(fetch, 0)).toContain('/structure/flags');
+    expect(requestBody(fetch, 0)).toMatchObject({
+      document_id: 'doc-1',
+      flag: 'duplicate_of',
+      target_document_id: 'doc-0',
+    });
+    expect(result.locked).toBe(true);
+    expect(result.event.flag).toBe('duplicate_of');
+  });
+
+  it('lists the archive and coalesces the null empty list', async () => {
+    const fetch = mockFetch(json({ corpus_id: 'c1', count: 0, entries: null }));
+    const client = clientWith(fetch);
+    const archived = await client.structureArchived('c1');
+    expect(requestUrl(fetch, 0)).toContain('/structure/archived');
+    expect(archived.entries).toEqual([]);
+  });
+});
+
 describe('stub structures', () => {
   function seeded() {
     return new StubSercha({
@@ -328,7 +392,9 @@ describe('stub structures', () => {
   it('groups the tray by candidate when asked', async () => {
     const tray = await seeded().structureTray('c1', { groupBy: 'candidate' });
     expect(tray.entries).toHaveLength(2);
-    const candidates = tray.groups?.map((g) => g.candidate).sort();
-    expect(candidates).toEqual(['acme', 'none']);
+    // Wire ordering, not lexicographic: the '' bucket (entries naming no
+    // candidate) sorts LAST so the actionable clusters lead.
+    const candidates = tray.groups?.map((g) => g.candidate);
+    expect(candidates).toEqual(['acme', '']);
   });
 });

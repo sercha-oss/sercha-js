@@ -178,6 +178,50 @@ With `queryable`, corpuses are filtered by the token's grants — the
 authoritative answer to what this token can query. A corpus missing here will
 fail at query time whether or not it exists.
 
+## Packs and cleanup
+
+Corpora organised by structure (Sercha 0.16.3+) expose the Pack Builder
+surface; Sercha 0.17+ adds the cleanup surface: corpus document listings
+with content hashes and partition keys, human flag confirmation
+(retire-without-delete) and the archive log.
+
+```ts
+// The rooms index: partitions plus the room badge, one call per corpus.
+const partitions = await sercha.corpusPartitions(corpusId);
+// partitions.structure_state === 'needs_review', partitions.tray_count === 2
+
+// A pack's members: filter the document listing by its partition key.
+const invoices = await sercha.corpusDocuments(corpusId, {
+  partitionKey: 'finance/invoices',
+});
+
+// Retire a duplicate in favour of its primary. Locks, leaves every
+// pack-scoped query, deletes nothing.
+await sercha.confirmFlag(corpusId, {
+  document_id: copy.id,
+  flag: 'duplicate_of',
+  target_document_id: primary.id,
+  rationale: 'Confirmed identical in review.',
+});
+
+// The archive log, and the undo: a human re-assignment restores.
+const archived = await sercha.structureArchived(corpusId);
+await sercha.assignDocument(corpusId, { document_id: copy.id, container_id: packId });
+```
+
+Two auth tiers, and applications should degrade between them rather than
+fault: `structure`, `structureTray`, `assignDocument`, `rerunStructure`,
+`confirmFlag` and the corpus CRUD are **admin-gated** — a default service
+account receives 403, which means "hide the surface", not "error".
+`corpusDocuments`, `corpusPartitions` and `structureArchived` need a
+**select grant** on the corpus and answer 404 without one, deliberately
+indistinguishable from a missing corpus. A corpus that does not organise
+by structure answers 409 with the envelope's code — a property of the
+corpus, not a fault; route the user elsewhere instead of retrying.
+
+When clustering duplicates by `content_hash`, an empty or absent hash
+means "not yet computed" — never treat two empties as a match.
+
 ## Testing
 
 `@sercha-ai/client/testing` provides an in-memory implementation of the same

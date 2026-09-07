@@ -49,6 +49,7 @@ export { CatalogueResource } from './resources/catalogue.js';
 export { LedgerResource } from './resources/ledger.js';
 export { SearchResource } from './resources/search.js';
 export { StructuresResource } from './resources/structures.js';
+export { CorpusesResource } from './resources/corpuses.js';
 export { SyncResource } from './resources/sync.js';
 
 export type {
@@ -109,6 +110,7 @@ export type {
   SearchResponse,
   SearchResultItem,
   Source,
+  SourceDocumentsPage,
 } from './types/search.js';
 
 // Exported for consumers implementing the Sercha interface themselves, e.g. a
@@ -132,10 +134,14 @@ export type {
 export type {
   AssignDocumentRequest,
   AssignDocumentResponse,
+  ConfirmableFlag,
+  ConfirmFlagRequest,
+  ConfirmFlagResponse,
   CorpusStructure,
   RerunStructureRequest,
   RerunStructureResponse,
   StructureActor,
+  StructureArchived,
   StructureAssignmentEvent,
   StructurePack,
   StructureState,
@@ -144,6 +150,16 @@ export type {
   StructureTrayFlag,
   StructureTrayGroup,
 } from './types/structures.js';
+
+export {
+  UNASSIGNED_PARTITION_KEY,
+  type Corpus,
+  type CorpusDocument,
+  type CorpusDocumentsPage,
+  type CorpusPartitions,
+  type PartitionCount,
+  type SourceContainer,
+} from './types/corpuses.js';
 
 export {
   isTerminalIngestStatus,
