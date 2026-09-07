@@ -340,7 +340,16 @@ export class StubSercha implements Sercha {
     await this.delay();
     return {
       ontologies: this.options.catalogue?.ontologies ?? [],
-      corpuses: this.options.catalogue?.corpuses ?? [],
+      // A corpus with a structure fixture advertises partition_strategy and
+      // the cleanup bit unless the fixture says otherwise, mirroring the
+      // server: structure declarations from before WITH CLEANUP existed are
+      // grandfathered as enabled. Explicit fixture values win.
+      corpuses: (this.options.catalogue?.corpuses ?? []).map((corpus) => ({
+        ...(corpus.id && this.options.structures?.[corpus.id]
+          ? { partition_strategy: 'structure', cleanup: true }
+          : {}),
+        ...corpus,
+      })),
       pipelines: this.options.catalogue?.pipelines ?? [],
     };
   }

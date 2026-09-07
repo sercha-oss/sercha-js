@@ -31,6 +31,12 @@ export interface Corpus {
   /** '' unpartitioned | 'folder' | 'group' | 'structure'. */
   partition_strategy?: string;
   partition_group_field?: string;
+  /**
+   * The organise structure of a structure-partitioned corpus, as
+   * '<collection_id>.<structure_name>'. Absent on non-structure corpora
+   * and on servers older than 0.18.
+   */
+  partition_structure_ref?: string;
   /** Resolved container rows. Single-GET responses only; lists omit it. */
   containers?: SourceContainer[];
   created_at: string;

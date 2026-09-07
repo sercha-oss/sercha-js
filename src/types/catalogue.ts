@@ -31,6 +31,18 @@ export interface CatalogueTreeOntology {
 export interface CatalogueTreeCorpus {
   id: string;
   name: string;
+  /**
+   * The corpus's declared partitioning: '', 'folder', 'group', or
+   * 'structure'. Absent on servers older than 0.18.
+   */
+  partition_strategy?: string;
+  /**
+   * Whether the corpus's frozen organise structure declares WITH CLEANUP
+   * (SD-140): the discovery bit a "Your data" surface filters rooms by.
+   * Derived from the schema declaration, never from app configuration.
+   * Absent (treat as false) on servers older than 0.18.
+   */
+  cleanup?: boolean;
   bindings: Array<{ ontology_id: string }>;
 }
 
