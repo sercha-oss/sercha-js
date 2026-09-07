@@ -43,16 +43,22 @@ import type {
 import type {
   AssignDocumentRequest,
   AssignDocumentResponse,
+  ConfirmFlagRequest,
+  ConfirmFlagResponse,
   CorpusStructure,
   RerunStructureRequest,
   RerunStructureResponse,
+  StructureArchived,
   StructureAssignmentEvent,
   StructurePack,
   StructureState,
   StructureTray,
   StructureTrayEntry,
+  StructureTrayFlag,
   StructureTrayGroup,
 } from '../types/structures.js';
+import { UNASSIGNED_PARTITION_KEY } from '../types/corpuses.js';
+import type { CorpusDocument, CorpusDocumentsPage, CorpusPartitions } from '../types/corpuses.js';
 import { SerchaTimeoutError } from '../transport/errors.js';
 import type {
   IngestStatus,
@@ -131,6 +137,8 @@ export interface StubStructureState {
   assignments: Record<string, { container_id: string; locked: boolean }>;
   events: StructureAssignmentEvent[];
   tray: StructureTrayEntry[];
+  /** Settled retirements, populated by confirmFlag. */
+  archived: StructureTrayEntry[];
 }
 
 /**
@@ -500,21 +508,32 @@ export class StubSercha implements Sercha {
     };
   }
 
-  async structureTray(corpusId: string, opts?: { groupBy?: 'candidate' }): Promise<StructureTray> {
+  async structureTray(
+    corpusId: string,
+    opts?: { groupBy?: 'candidate'; flag?: StructureTrayFlag },
+  ): Promise<StructureTray> {
     await this.delay();
     this.structureFixture(corpusId);
-    const entries = [...this.structureState(corpusId).tray];
+    let entries = [...this.structureState(corpusId).tray];
+    if (opts?.flag) entries = entries.filter((entry) => entry.flag === opts.flag);
     if (opts?.groupBy !== 'candidate') return { entries };
 
     const groups = new Map<string, StructureTrayGroup>();
     for (const entry of entries) {
       const payload = entry.flag_payload as { candidate?: unknown } | null | undefined;
-      const candidate = typeof payload?.candidate === 'string' ? payload.candidate : 'none';
+      // The server's ungrouped bucket is '' (sorted last), not a made-up
+      // word — the stub must not disagree with the wire.
+      const candidate = typeof payload?.candidate === 'string' ? payload.candidate : '';
       const group = groups.get(candidate) ?? { candidate, entries: [] };
       group.entries.push(entry);
       groups.set(candidate, group);
     }
-    return { entries, groups: [...groups.values()] };
+    // The server sorts groups by candidate with the '' bucket LAST, so the
+    // actionable clusters lead; mirror that.
+    const sorted = [...groups.values()].sort((a, b) =>
+      a.candidate === '' ? 1 : b.candidate === '' ? -1 : a.candidate.localeCompare(b.candidate),
+    );
+    return { entries, groups: sorted };
   }
 
   async assignDocument(
@@ -552,6 +571,9 @@ export class StubSercha implements Sercha {
     // The tray entry is consumed: it existed because the document had no
     // confident home, and now it has one.
     state.tray = state.tray.filter((entry) => entry.document_id !== req.document_id);
+    // And so is any settled retirement: a re-filed document is no longer
+    // archived, exactly as the server's standing-opinion projection behaves.
+    state.archived = state.archived.filter((entry) => entry.document_id !== req.document_id);
 
     return { event, container_id: pack.id, locked: true, partition_key: pack.slug };
   }
@@ -590,6 +612,160 @@ export class StubSercha implements Sercha {
     return fixture;
   }
 
+  /**
+   * Confirms like the server: locks, leaves the working structure, moves the
+   * entry from the tray to the archive. Target validation mirrors the wire
+   * (400 when a retirement names no survivor).
+   */
+  async confirmFlag(corpusId: string, req: ConfirmFlagRequest): Promise<ConfirmFlagResponse> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    const state = this.structureState(corpusId);
+
+    const needsTarget = req.flag === 'duplicate_of' || req.flag === 'superseded_by';
+    if (needsTarget && !('target_document_id' in req && req.target_document_id)) {
+      throw new SerchaHttpError(400, `StubSercha: target_document_id is required for ${req.flag}.`);
+    }
+
+    const payload = needsTarget
+      ? {
+          [req.flag === 'duplicate_of' ? 'primary_document_id' : 'current_document_id']: (
+            req as { target_document_id: string }
+          ).target_document_id,
+        }
+      : null;
+    const event: StructureAssignmentEvent = {
+      id: `stub-assignment-${++this.structureSeq}`,
+      document_id: req.document_id,
+      actor: 'human',
+      rationale: req.rationale ?? null,
+      flag: req.flag,
+      flag_payload: payload,
+      created_at: new Date(0).toISOString(),
+    };
+    state.events.push(event);
+    delete state.assignments[req.document_id];
+
+    const trayEntry = state.tray.find((entry) => entry.document_id === req.document_id);
+    state.tray = state.tray.filter((entry) => entry.document_id !== req.document_id);
+    state.archived = state.archived.filter((entry) => entry.document_id !== req.document_id);
+    state.archived.push({
+      document_id: req.document_id,
+      document_title: trayEntry?.document_title ?? req.document_id,
+      document_path: trayEntry?.document_path ?? '',
+      event_id: event.id,
+      actor: 'human',
+      flag: req.flag,
+      flag_payload: payload,
+      rationale: req.rationale ?? '',
+      confidence: null,
+      created_at: event.created_at,
+    });
+
+    return { event, locked: true, partition_key: UNASSIGNED_PARTITION_KEY };
+  }
+
+  /** The settled complement of the tray, per the server's contract. */
+  async structureArchived(corpusId: string): Promise<StructureArchived> {
+    await this.delay();
+    this.structureFixture(corpusId);
+    const entries = [...this.structureState(corpusId).archived];
+    return { corpus_id: corpusId, count: entries.length, entries };
+  }
+
+  /**
+   * Serves the corpus fixtures' rows as documents. Minimal on purpose: the
+   * stub has no document store, so each fixture row's _doc becomes a
+   * document id and the partition key comes from the standing assignment
+   * (pack slug), the archive (the unassigned sentinel), or ''.
+   */
+  async corpusDocuments(
+    corpusId: string,
+    opts?: { limit?: number; offset?: number; partitionKey?: string },
+  ): Promise<CorpusDocumentsPage> {
+    await this.delay();
+    const all = this.stubCorpusDocuments(corpusId);
+    const filtered =
+      opts?.partitionKey !== undefined
+        ? all.filter((doc) => doc.partition_key === opts.partitionKey)
+        : all;
+    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? 20;
+    return {
+      documents: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset,
+    };
+  }
+
+  async corpusPartitions(corpusId: string): Promise<CorpusPartitions> {
+    await this.delay();
+    const counts = new Map<string, number>();
+    for (const doc of this.stubCorpusDocuments(corpusId)) {
+      counts.set(doc.partition_key, (counts.get(doc.partition_key) ?? 0) + 1);
+    }
+    const partitions = [...counts.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, doc_count]) => ({ key, doc_count }));
+    const fixture = this.options.structures?.[corpusId];
+    const state = fixture ? this.structureState(corpusId) : undefined;
+    return {
+      corpus_id: corpusId,
+      ...(state
+        ? {
+            structure_state: state.tray.length > 0 ? 'needs_review' : 'fresh',
+            tray_count: state.tray.length,
+          }
+        : {}),
+      partitions,
+    };
+  }
+
+  private stubCorpusDocuments(corpusId: string): CorpusDocument[] {
+    const fixture = this.options.structures?.[corpusId];
+    const state = fixture ? this.structureState(corpusId) : undefined;
+    const packSlug = (containerId: string): string =>
+      (fixture && findPack(fixture.packs, containerId)?.slug) ?? '';
+    const docs: CorpusDocument[] = [];
+    const seen = new Set<string>();
+    const push = (id: string, title: string, path: string, key: string): void => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      docs.push({
+        id,
+        source_id: 'stub-source',
+        title,
+        path,
+        mime_type: 'application/octet-stream',
+        indexed_at: new Date(0).toISOString(),
+        partition_key: key,
+      });
+    };
+    if (state) {
+      for (const [docId, assignment] of Object.entries(state.assignments)) {
+        push(docId, docId, '', packSlug(assignment.container_id));
+      }
+      for (const entry of state.tray) {
+        push(
+          entry.document_id,
+          entry.document_title,
+          entry.document_path,
+          UNASSIGNED_PARTITION_KEY,
+        );
+      }
+      for (const entry of state.archived) {
+        push(
+          entry.document_id,
+          entry.document_title,
+          entry.document_path,
+          UNASSIGNED_PARTITION_KEY,
+        );
+      }
+    }
+    return docs;
+  }
+
   private structureState(corpusId: string): StubStructureState {
     let state = this.structureStates.get(corpusId);
     if (!state) {
@@ -597,6 +773,7 @@ export class StubSercha implements Sercha {
         assignments: {},
         events: [],
         tray: [...(this.options.structures?.[corpusId]?.tray ?? [])],
+        archived: [],
       };
       this.structureStates.set(corpusId, state);
     }

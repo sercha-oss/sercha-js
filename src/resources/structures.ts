@@ -1,12 +1,17 @@
+import { isAccepted202, type Accepted202 } from '../transport/http.js';
 import type { HttpTransport } from '../transport/http.js';
 import type {
   AssignDocumentRequest,
   AssignDocumentResponse,
+  ConfirmFlagRequest,
+  ConfirmFlagResponse,
   CorpusStructure,
   RerunStructureRequest,
   RerunStructureResponse,
+  StructureArchived,
   StructurePack,
   StructureTray,
+  StructureTrayFlag,
 } from '../types/structures.js';
 
 /**
@@ -52,13 +57,22 @@ export class StructuresResource {
    */
   async structureTray(
     corpusId: string,
-    opts?: { groupBy?: 'candidate' },
+    opts?: { groupBy?: 'candidate'; flag?: StructureTrayFlag },
     signal?: AbortSignal,
   ): Promise<StructureTray> {
     const response = await this.http.request<StructureTray>(
       `/api/v1/corpuses/${encodeURIComponent(corpusId)}/structure/tray`,
       {
-        ...(opts?.groupBy ? { query: { group_by: opts.groupBy } } : {}),
+        ...(opts?.groupBy || opts?.flag
+          ? {
+              query: {
+                ...(opts?.groupBy ? { group_by: opts.groupBy } : {}),
+                // Validated server-side against the closed vocabulary: a
+                // typo answers 400, never a silently empty tray.
+                ...(opts?.flag ? { flag: opts.flag } : {}),
+              },
+            }
+          : {}),
         ...(signal ? { signal } : {}),
       },
     );
@@ -100,10 +114,56 @@ export class StructuresResource {
     req: RerunStructureRequest = {},
     signal?: AbortSignal,
   ): Promise<RerunStructureResponse> {
-    return this.http.request<RerunStructureResponse>(
-      `/api/v1/corpuses/${encodeURIComponent(corpusId)}/structure/rerun`,
+    const response = await this.http.request<
+      RerunStructureResponse | Accepted202<RerunStructureResponse>
+    >(`/api/v1/corpuses/${encodeURIComponent(corpusId)}/structure/rerun`, {
+      method: 'POST',
+      body: req,
+      ...(signal ? { signal } : {}),
+    });
+    // The server answers 202 Accepted, which the transport tags as
+    // {status, body} for the query confirm protocol. Without this unwrap the
+    // caller's run_id is undefined — a bug that shipped in 0.4.0 behind a
+    // test that mocked a 200.
+    return isAccepted202<RerunStructureResponse>(response) ? response.body : response;
+  }
+
+  /**
+   * Confirm a document's flag state, as the authenticated human: retire a
+   * duplicate in favour of its primary, or supersede an old version in favour
+   * of the current one.
+   *
+   * The confirmation locks (the agent never re-litigates it) and moves the
+   * document out of the working structure: it leaves every pack-scoped query
+   * and, once search subtraction is active, search results too. Nothing is
+   * deleted — the row, blobs and indexes survive, and a later
+   * assignDocument() restores the document to a pack.
+   */
+  async confirmFlag(
+    corpusId: string,
+    req: ConfirmFlagRequest,
+    signal?: AbortSignal,
+  ): Promise<ConfirmFlagResponse> {
+    return this.http.request<ConfirmFlagResponse>(
+      `/api/v1/corpuses/${encodeURIComponent(corpusId)}/structure/flags`,
       { method: 'POST', body: req, ...(signal ? { signal } : {}) },
     );
+  }
+
+  /**
+   * The settled retirements: what confirmFlag() has archived, with each
+   * document's standing event. The decided complement of the tray.
+   *
+   * Unlike the rest of this resource this endpoint is NOT admin-gated: it
+   * requires a select grant on the corpus (or admin), and answers 404 —
+   * indistinguishable from a missing corpus — when the grant is absent.
+   */
+  async archived(corpusId: string, signal?: AbortSignal): Promise<StructureArchived> {
+    const response = await this.http.request<StructureArchived>(
+      `/api/v1/corpuses/${encodeURIComponent(corpusId)}/structure/archived`,
+      signal ? { signal } : {},
+    );
+    return { ...response, entries: response.entries ?? [] };
   }
 }
 
