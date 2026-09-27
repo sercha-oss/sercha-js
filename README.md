@@ -303,7 +303,7 @@ breaking changes. Pin exactly if that matters to you.
 
 ## Licence
 
-[Apache 2.0](LICENSE). Copyright © 2026 Custodia Labs Pty Ltd
-(ABN 89 688 480 391).
+[Apache 2.0](LICENSE). Copyright © 2026 Sercha Technologies Pty Ltd
+(ABN 93 702 066 420).
 
 Support: support@sercha.dev

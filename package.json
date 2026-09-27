@@ -3,7 +3,7 @@
   "version": "0.6.0",
   "description": "TypeScript client for the Sercha Enterprise API",
   "license": "Apache-2.0",
-  "author": "Custodia Labs Pty Ltd",
+  "author": "Sercha Technologies Pty Ltd",
   "homepage": "https://github.com/sercha-oss/sercha-js",
   "repository": {
     "type": "git",
