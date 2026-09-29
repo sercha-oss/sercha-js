@@ -51,6 +51,13 @@ export { SearchResource } from './resources/search.js';
 export { StructuresResource } from './resources/structures.js';
 export { CorpusesResource } from './resources/corpuses.js';
 export { SyncResource } from './resources/sync.js';
+export { GrantsResource } from './resources/grants.js';
+export {
+  AppsResource,
+  AppAccessResource,
+  AppGuestsResource,
+  AppSharesResource,
+} from './resources/apps.js';
 
 export type {
   CellValue,
@@ -173,3 +180,37 @@ export {
   type SyncAccepted,
   type WaitForIngestOptions,
 } from './types/sync.js';
+
+export {
+  partitionObjectId,
+  type CheckGrantRequest,
+  type CheckGrantResponse,
+  type CreateGrantRequest,
+  type Grant,
+  type GrantAction,
+  type GrantObjectKind,
+  type GrantSubjectKind,
+  type ListGrantsFilter,
+} from './types/grants.js';
+
+export type {
+  App,
+  AppAccess,
+  AppAccessMode,
+  AppInviteResponse,
+  AppInviteUser,
+  AppRole,
+  AppShare,
+  AppShareRole,
+  AppSharesResponse,
+  CreateAppShareRequest,
+  CreateAppShareResponse,
+  CreateGuestLinkRequest,
+  GuestLink,
+  GuestLinksResponse,
+  InviteAppUserRequest,
+  OpenAppLinkParams,
+  OpenAppLinkResponse,
+  PromoteGuestRequest,
+  SetAppAccessRequest,
+} from './types/apps.js';
