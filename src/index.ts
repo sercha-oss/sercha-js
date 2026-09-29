@@ -57,6 +57,7 @@ export {
   AppAccessResource,
   AppGuestsResource,
   AppSharesResource,
+  AppConfinedResource,
 } from './resources/apps.js';
 
 export type {
@@ -203,6 +204,10 @@ export type {
   AppShare,
   AppShareRole,
   AppSharesResponse,
+  ConfineRequest,
+  ConfinedKey,
+  ConfinedPerson,
+  ConfinedResponse,
   CreateAppShareRequest,
   CreateAppShareResponse,
   CreateGuestLinkRequest,

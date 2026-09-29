@@ -226,3 +226,89 @@ describe('apps.invite', () => {
     expect(invite.set_password_url).toBeNull();
   });
 });
+
+describe('apps.invite with a partition', () => {
+  it('sends the partition so the person is confined instead of granted the corpus', async () => {
+    const fetchImpl = mockFetch(
+      json(
+        {
+          user: { id: 'u-4', email: 'c@x.com', name: 'C', seat_type: 'app_user', created: true },
+          share: share({ subject_id: 'u-4' }),
+          set_password_url: 'https://sercha.test/set-password/?token=t',
+        },
+        201,
+      ),
+    );
+    await clientWith(fetchImpl).apps.invite('app-1', {
+      email: 'c@x.com',
+      name: 'C',
+      role: 'use',
+      partition: 'room/tenant a',
+    });
+    expect(requestBody(fetchImpl)).toEqual({
+      email: 'c@x.com',
+      name: 'C',
+      role: 'use',
+      partition: 'room/tenant a',
+    });
+  });
+});
+
+describe('apps.confined', () => {
+  const person = {
+    subject_kind: 'user',
+    subject_id: 'u-2',
+    name: 'Dana',
+    email: 'dana@x.com',
+    keys: [{ key: 'room/tenant a', grant_id: 'g-1' }],
+  };
+
+  it('lists confined people from the envelope', async () => {
+    const fetchImpl = mockFetch(json({ confined: [person] }));
+    const people = await clientWith(fetchImpl).apps.confined.list('app-1');
+    const [url, init] = apiCalls(fetchImpl)[0]!;
+    expect(url).toBe('https://sercha.test/api/v1/apps/app-1/confined');
+    expect(init?.method).toBe('GET');
+    expect(people[0]?.keys[0]?.grant_id).toBe('g-1');
+  });
+
+  it('coalesces a null list and null keys', async () => {
+    const fetchImpl = mockFetch(json({ confined: null }));
+    expect(await clientWith(fetchImpl).apps.confined.list('app-1')).toEqual([]);
+    const fetchKeys = mockFetch(json({ confined: [{ ...person, keys: null }] }));
+    expect((await clientWith(fetchKeys).apps.confined.list('app-1'))[0]?.keys).toEqual([]);
+  });
+
+  it('confines a user to a key', async () => {
+    const fetchImpl = mockFetch(json(person, 201));
+    const result = await clientWith(fetchImpl).apps.confined.add('app-1', {
+      user_id: 'u-2',
+      key: 'room/tenant a',
+    });
+    const [url, init] = apiCalls(fetchImpl)[0]!;
+    expect(url).toBe('https://sercha.test/api/v1/apps/app-1/confined');
+    expect(init?.method).toBe('POST');
+    expect(requestBody(fetchImpl)).toEqual({ user_id: 'u-2', key: 'room/tenant a' });
+    expect(result.subject_id).toBe('u-2');
+  });
+
+  it('releases a key as a query parameter, encoding slashes', async () => {
+    const fetchImpl = mockFetch(new Response(null, { status: 204 }));
+    await expect(
+      clientWith(fetchImpl).apps.confined.remove('app-1', 'u-2', 'room/tenant a'),
+    ).resolves.toBeUndefined();
+    const [url, init] = apiCalls(fetchImpl)[0]!;
+    expect(init?.method).toBe('DELETE');
+    const parsed = new URL(url);
+    expect(parsed.pathname).toBe('/api/v1/apps/app-1/confined/u-2');
+    expect(parsed.searchParams.get('key')).toBe('room/tenant a');
+  });
+
+  it('still sends the key parameter when the key is empty (the global partition)', async () => {
+    const fetchImpl = mockFetch(new Response(null, { status: 204 }));
+    await clientWith(fetchImpl).apps.confined.remove('app-1', 'u-2', '');
+    const url = requestUrl(fetchImpl);
+    expect(url).toBe('https://sercha.test/api/v1/apps/app-1/confined/u-2?key=');
+    expect(new URL(url).searchParams.has('key')).toBe(true);
+  });
+});
