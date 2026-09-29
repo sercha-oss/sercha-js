@@ -222,6 +222,70 @@ corpus, not a fault; route the user elsewhere instead of retrying.
 When clustering duplicates by `content_hash`, an empty or absent hash
 means "not yet computed" — never treat two empties as a match.
 
+## Access: grants, shares, guest links
+
+Three levers decide who sees what (Sercha 0.22+): a **grant** scopes a
+subject to a corpus, one of its partitions, or a source; a **share** gives a
+member a role on an app; a **guest link** opens a published app to someone
+with no account at all.
+
+```ts
+import { partitionObjectId } from '@sercha-ai/client';
+
+// Scope a person to one partition of a corpus. Admin only.
+await sercha.grants.create({
+  subject_kind: 'user',
+  subject_id: 'founder@x.com',
+  action: 'select',
+  object_kind: 'partition',
+  object_id: partitionObjectId(corpusId, 'room/tenant a'),
+});
+const mine = await sercha.grants.list({ subject_id: 'founder@x.com' });
+const { allowed } = await sercha.grants.check({
+  action: 'select',
+  object_kind: 'corpus',
+  object_id: corpusId,
+});
+
+// Share an app with a member, or invite one by email. Edit role on the app.
+const share = await sercha.apps.shares.create(appId, {
+  subject_kind: 'user',
+  subject_id: userId,
+  role: 'use',
+});
+const invite = await sercha.apps.invite(appId, { email, name, role: 'use' });
+// invite.set_password_url is a one-time link for a person the invite created.
+
+// The access switch: team, invited, link or public.
+await sercha.apps.access.set(appId, { mode: 'link', password: 'hunter2' });
+
+// A guest link scoped to one partition, good for 30 days.
+const link = await sercha.apps.guests.create(appId, {
+  label: 'Tenant A reviewer',
+  partition: 'room/tenant a',
+  expires_in_days: 30,
+});
+// link.url is relative: `${origin}${link.url}`.
+```
+
+Object kinds are `corpus`, `binding`, `pipeline`, `ledger`, `partition`
+(object id `<corpus id>:<key>`) and `source`; actions are `select`, `use`,
+`admin`, `annotate`, `curate` and `write`. A grant on the whole corpus wins
+over any partition grant; a subject holding only partition grants sees those
+partitions plus the global documents. Share `warnings` name a subject who
+lacks select on the app's corpus: the share alone shows them an empty app.
+
+Grants are **admin**-gated. The access switch, guest links, shares and
+invites need the **edit** role on the app (listing shares works for any
+role). `grants.check()` needs only an authenticated token and always
+answers for the caller.
+
+A guest opens the link with `apps.openLink(appId, { g })`, which sends no
+bearer token and returns the app with a 12-hour `session_token`; a link-mode
+app takes `{ k, p }` and a public one takes nothing. Build a second client
+with `auth: { token: session_token }` for that viewer's reads. A wrong or
+revoked token answers 404, deliberately the same as a missing app.
+
 ## Testing
 
 `@sercha-ai/client/testing` provides an in-memory implementation of the same

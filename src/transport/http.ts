@@ -12,6 +12,13 @@ export interface RequestOptions {
   /** Overrides the client default. Used by long-running endpoints. */
   timeoutMs?: number;
   headers?: Record<string, string>;
+  /**
+   * Send no bearer token and mint none. For the handful of routes that
+   * carry their own credential in the URL (the app link opener, GET /a/{id});
+   * a bearer there would be ignored at best and, for a token the route
+   * does not recognise, refused.
+   */
+  auth?: false;
 }
 
 /**
@@ -74,16 +81,17 @@ export class HttpTransport {
   }
 
   private async attempt<T>(url: string, options: RequestOptions, timeoutMs: number): Promise<T> {
-    const token = await this.tokens.getToken();
     const signal = this.composeSignal(options.signal, timeoutMs);
 
     const headers: Record<string, string> = {
       Accept: 'application/json',
       ...this.config.headers,
       ...options.headers,
-      // Last, so neither caller headers nor config can displace credentials.
-      Authorization: `Bearer ${token}`,
     };
+    if (options.auth !== false) {
+      // Last, so neither caller headers nor config can displace credentials.
+      headers.Authorization = `Bearer ${await this.tokens.getToken()}`;
+    }
     if (this.config.userAgent) {
       headers['User-Agent'] = this.config.userAgent;
     }

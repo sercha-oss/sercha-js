@@ -10,6 +10,8 @@ import { SearchResource } from './resources/search.js';
 import { CorpusesResource } from './resources/corpuses.js';
 import { StructuresResource } from './resources/structures.js';
 import { SyncResource } from './resources/sync.js';
+import { GrantsResource } from './resources/grants.js';
+import { AppsResource } from './resources/apps.js';
 import type { PaginateOptions, QueryOptions, QueryResult, QueryRow } from './types/query.js';
 import type {
   GenieConversation,
@@ -224,6 +226,19 @@ export class SerchaClient implements Sercha {
   readonly structures: StructuresResource;
   readonly corpuses: CorpusesResource;
   readonly sync: SyncResource;
+  /**
+   * Grants: admin-gated authorisation writes plus a caller-side check. Not
+   * on the `Sercha` interface, like the other admin-only surfaces (corpus
+   * CRUD): an application reads its access from the grant-filtered
+   * catalogue tree; this is operator tooling.
+   */
+  readonly grants: GrantsResource;
+  /**
+   * App access: the switch, guest links, shares and invites of an app, and
+   * the no-auth link opener. Editor tooling, so kept off the interface with
+   * the grants.
+   */
+  readonly apps: AppsResource;
 
   private readonly transport: HttpTransport;
 
@@ -241,6 +256,8 @@ export class SerchaClient implements Sercha {
     this.structures = new StructuresResource(this.transport);
     this.corpuses = new CorpusesResource(this.transport);
     this.sync = new SyncResource(this.transport);
+    this.grants = new GrantsResource(this.transport);
+    this.apps = new AppsResource(this.transport);
   }
 
   // Shorthands for the common operations. The resource objects above remain
