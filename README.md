@@ -255,6 +255,9 @@ const share = await sercha.apps.shares.create(appId, {
 });
 const invite = await sercha.apps.invite(appId, { email, name, role: 'use' });
 // invite.set_password_url is a one-time link for a person the invite created.
+// With a partition, the invite confines the person to that key instead of
+// granting the whole corpus (Sercha 0.22.3+).
+await sercha.apps.invite(appId, { email, name, role: 'use', partition: 'room/tenant a' });
 
 // The access switch: team, invited, link or public.
 await sercha.apps.access.set(appId, { mode: 'link', password: 'hunter2' });
@@ -285,6 +288,23 @@ bearer token and returns the app with a 12-hour `session_token`; a link-mode
 app takes `{ k, p }` and a public one takes nothing. Build a second client
 with `auth: { token: session_token }` for that viewer's reads. A wrong or
 revoked token answers 404, deliberately the same as a missing app.
+
+### Confinement
+
+Editors see and change who is confined to which partition of the app's
+corpus without the admin-only grants API (Sercha 0.22.3+). Edit role on
+the app.
+
+```ts
+const people = await sercha.apps.confined.list(appId);
+// [{ subject_kind: 'user', subject_id, name, email, keys: [{ key, grant_id }] }]
+
+await sercha.apps.confined.add(appId, { user_id: userId, key: 'room/tenant a' });
+await sercha.apps.confined.remove(appId, userId, 'room/tenant a');
+```
+
+The key is sent as `?key=` on remove, even when empty: `''` is the global
+partition, and the parameter's presence is what the server reads.
 
 ## Testing
 

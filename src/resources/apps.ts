@@ -4,6 +4,9 @@ import type {
   AppInviteResponse,
   AppShare,
   AppSharesResponse,
+  ConfineRequest,
+  ConfinedPerson,
+  ConfinedResponse,
   CreateAppShareRequest,
   CreateAppShareResponse,
   CreateGuestLinkRequest,
@@ -181,6 +184,51 @@ export class AppSharesResource {
 }
 
 /**
+ * Confinement: which people are held to which partitions of the app's
+ * corpus, as partition grants an editor can see and change without the
+ * admin-only grants API. Every method needs the **edit** role on the app.
+ */
+export class AppConfinedResource {
+  constructor(private readonly http: HttpTransport) {}
+
+  /** Everyone confined within the app's corpus, with their keys. Edit role. */
+  async list(appId: string, signal?: AbortSignal): Promise<ConfinedPerson[]> {
+    const response = await this.http.request<ConfinedResponse>(appPath(appId, '/confined'), {
+      ...(signal ? { signal } : {}),
+    });
+    return (response.confined ?? []).map((p) => ({ ...p, keys: p.keys ?? [] }));
+  }
+
+  /**
+   * Confine a user to a partition key: a partition grant on the app's
+   * corpus. Edit role. Returns the person with every key they now hold.
+   */
+  async add(appId: string, req: ConfineRequest, signal?: AbortSignal): Promise<ConfinedPerson> {
+    const person = await this.http.request<ConfinedPerson>(appPath(appId, '/confined'), {
+      method: 'POST',
+      body: req,
+      ...(signal ? { signal } : {}),
+    });
+    return { ...person, keys: person.keys ?? [] };
+  }
+
+  /**
+   * Release a user from one partition key. Edit role.
+   *
+   * The key travels as `?key=` because partition keys carry slashes, and it
+   * is always sent, even when empty: '' is the global partition, and the
+   * parameter's presence is what the server reads, not its content.
+   */
+  async remove(appId: string, userId: string, key: string, signal?: AbortSignal): Promise<void> {
+    await this.http.request<void>(appPath(appId, `/confined/${encodeURIComponent(userId)}`), {
+      method: 'DELETE',
+      query: { key },
+      ...(signal ? { signal } : {}),
+    });
+  }
+}
+
+/**
  * The access surface of an app: who can open it and how.
  *
  * Grouped by concern: `access` is the end-user switch, `guests` the links
@@ -193,18 +241,21 @@ export class AppsResource {
   readonly access: AppAccessResource;
   readonly guests: AppGuestsResource;
   readonly shares: AppSharesResource;
+  readonly confined: AppConfinedResource;
 
   constructor(private readonly http: HttpTransport) {
     this.access = new AppAccessResource(http);
     this.guests = new AppGuestsResource(http);
     this.shares = new AppSharesResource(http);
+    this.confined = new AppConfinedResource(http);
   }
 
   /**
    * Invite a person by email. Edit role.
    *
    * Creates an app-user seat when the email has no login (409 at the licence
-   * cap), grants select on the app's corpus, shares the app with the role,
+   * cap), grants select on the app's corpus (or, with `partition`, on that
+   * one partition of it), shares the app with the role,
    * and returns a one-time set-password link valid 7 days for a created
    * person (null for someone who already had a login). No email is sent.
    */

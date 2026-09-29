@@ -192,6 +192,12 @@ export interface InviteAppUserRequest {
   email: string;
   name: string;
   role: AppShareRole;
+  /**
+   * Confine the person to one partition of the app's corpus (Sercha 0.22.3+):
+   * they get a partition grant on this key instead of a corpus grant. Omit to
+   * grant the whole corpus. '' is a real key, the global partition.
+   */
+  partition?: string;
 }
 
 /** The invited person. */
@@ -215,4 +221,36 @@ export interface AppInviteResponse {
   user: AppInviteUser;
   share: AppShare;
   set_password_url: string | null;
+}
+
+/** One partition a person is confined to, with the grant that confines them. */
+export interface ConfinedKey {
+  /** The partition key. '' is the global partition. */
+  key: string;
+  grant_id: string;
+}
+
+/**
+ * A person confined to parts of the app's corpus by partition grants. Lets
+ * an app's editors see who is confined to what without the admin-only
+ * grants listing.
+ */
+export interface ConfinedPerson {
+  subject_kind: 'user' | 'group';
+  subject_id: string;
+  name?: string;
+  email?: string;
+  keys: ConfinedKey[];
+}
+
+/** GET /api/v1/apps/{id}/confined. */
+export interface ConfinedResponse {
+  confined: ConfinedPerson[];
+}
+
+/** POST /api/v1/apps/{id}/confined. */
+export interface ConfineRequest {
+  user_id: string;
+  /** The partition key to confine to. '' is the global partition. */
+  key: string;
 }
