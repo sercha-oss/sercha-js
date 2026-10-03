@@ -47,7 +47,7 @@ export { RunsResource } from './resources/runs.js';
 export { GenieResource, type StreamOptions } from './resources/genie.js';
 export { CatalogueResource } from './resources/catalogue.js';
 export { LedgerResource } from './resources/ledger.js';
-export { SearchResource } from './resources/search.js';
+export { DocumentsResource } from './resources/documents.js';
 export { StructuresResource } from './resources/structures.js';
 export { CorpusesResource } from './resources/corpuses.js';
 export { SyncResource } from './resources/sync.js';
@@ -112,14 +112,7 @@ export type {
   CatalogueTreePipeline,
 } from './types/catalogue.js';
 
-export type {
-  Document,
-  SearchRequest,
-  SearchResponse,
-  SearchResultItem,
-  Source,
-  SourceDocumentsPage,
-} from './types/search.js';
+export type { Document, Source, SourceDocumentsPage } from './types/documents.js';
 
 // Exported for consumers implementing the Sercha interface themselves, e.g. a
 // recording proxy or a fixture generator.

@@ -1,37 +1,12 @@
 import type { HttpTransport } from '../transport/http.js';
-import type {
-  Document,
-  SearchRequest,
-  SearchResponse,
-  Source,
-  SourceDocumentsPage,
-} from '../types/search.js';
+import type { Document, Source, SourceDocumentsPage } from '../types/documents.js';
 
 /**
- * Document retrieval.
- *
- * Distinct from query(): search is ranked full-text and semantic retrieval
- * over document bodies, while SerchaQL queries the extracted entity graph.
+ * Documents and sources: resolve a document id, list sources and page through
+ * a source's documents.
  */
-export class SearchResource {
+export class DocumentsResource {
   constructor(private readonly http: HttpTransport) {}
-
-  /**
-   * Search indexed documents.
-   *
-   * Search runs under the server's extended 5-minute deadline rather than the
-   * 30s one, so the client timeout is raised to match; a hybrid search over a
-   * large corpus can legitimately exceed 30s.
-   */
-  async search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
-    const response = await this.http.request<SearchResponse>('/api/v1/search', {
-      method: 'POST',
-      body: request,
-      timeoutMs: 300_000,
-      ...(signal ? { signal } : {}),
-    });
-    return { ...response, results: response.results ?? [] };
-  }
 
   async getDocument(documentId: string, signal?: AbortSignal): Promise<Document> {
     return this.http.request<Document>(`/api/v1/documents/${encodeURIComponent(documentId)}`, {

@@ -31,7 +31,7 @@ import type {
   GenieTurnResult,
 } from '../types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from '../types/runs.js';
-import type { Document, SearchRequest, SearchResponse } from '../types/search.js';
+import type { Document } from '../types/documents.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from '../types/catalogue.js';
 import type {
   AppendLedgerRecord,
@@ -84,7 +84,6 @@ export interface StubSerchaOptions {
   /** Fallback for statements not in `queries`. Defaults to throwing. */
   onQuery?: QueryHandler;
   runs?: Record<string, Run>;
-  search?: SearchResponse;
   /** Documents by id, for resolving the source behind a query row. */
   documents?: Record<string, Document>;
   catalogue?: Partial<CatalogueTree>;
@@ -202,18 +201,6 @@ export class StubSercha implements Sercha {
       throw new SerchaError(`Expected exactly 1 row, got ${result.rows.length}`);
     }
     return result.rows[0] as T;
-  }
-
-  async search(request: SearchRequest, _signal?: AbortSignal): Promise<SearchResponse> {
-    await this.delay();
-    return (
-      this.options.search ?? {
-        query: request.query,
-        mode: request.mode ?? 'hybrid',
-        results: [],
-        total_count: 0,
-      }
-    );
   }
 
   /**
@@ -794,7 +781,7 @@ export class StubSercha implements Sercha {
    *
    * Pushed documents genuinely pass through 'processing' before 'indexed',
    * because acceptance-is-not-indexing is the behaviour worth testing: an
-   * application that searches immediately after pushDocuments() resolves
+   * application that reads immediately after pushDocuments() resolves
    * should see that miss against the stub too, not first in production.
    * Promotion is a deterministic poll count (see indexAfterPolls), so
    * waitForIngest is testable without time mocks.

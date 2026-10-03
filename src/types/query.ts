@@ -45,7 +45,7 @@ export interface QueryStats {
 /**
  * Execution context for the statement.
  *
- * Present for SELECT/SEARCH where the executor resolves a corpus; absent for
+ * Present for SELECT where the executor resolves a corpus; absent for
  * DDL and SHOW. `pipeline_config_hash` is reserved and always absent today.
  */
 export interface ExecutionContext {
