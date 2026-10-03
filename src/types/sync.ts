@@ -45,7 +45,7 @@ export interface SourceSyncState {
  * Where a pushed document is in the ingest pipeline.
  *
  * Acceptance is not indexing: pushDocuments() returning is only the start.
- * A document is searchable at `indexed` and never will be at `failed`.
+ * A document is processed at `indexed` and never will be at `failed`.
  */
 export type IngestStatus = 'processing' | 'indexed' | 'failed';
 

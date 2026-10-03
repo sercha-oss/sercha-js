@@ -13,7 +13,7 @@
  * ungranted caller cannot confirm what exists.
  */
 
-import type { Document } from './search.js';
+import type { Document } from './documents.js';
 
 /**
  * The partition key documents carry while they sit in a structure corpus's

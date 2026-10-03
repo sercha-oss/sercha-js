@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SerchaHttpError, SerchaTimeoutError } from '../src/transport/errors.js';
 import { isTerminalIngestStatus, TERMINAL_INGEST_STATUSES } from '../src/types/sync.js';
-import type { Document } from '../src/types/search.js';
+import type { Document } from '../src/types/documents.js';
 import { StubSercha } from '../src/testing/index.js';
 import { json, mockFetch, requestBody, requestUrl, testClient as clientWith } from './helpers.js';
 

@@ -1,7 +1,7 @@
 import type { HttpTransport } from '../transport/http.js';
 import { isAccepted202, type Accepted202 } from '../transport/http.js';
 import { SerchaTimeoutError } from '../transport/errors.js';
-import type { Document } from '../types/search.js';
+import type { Document } from '../types/documents.js';
 import {
   isTerminalIngestStatus,
   type PushDocumentsRequest,
@@ -22,7 +22,7 @@ const INGEST_DEFAULTS = {
  *
  * Everything here is asynchronous on the server side: a sync trigger answers
  * 202 and runs in the background, and a pushed document is accepted long
- * before it is searchable. The methods reflect that split — trigger/push
+ * before it is processed. The methods reflect that split — trigger/push
  * return immediately, and the state/polling methods observe progress.
  *
  * Triggering syncs and pushing documents are admin/write-gated: a default
@@ -81,7 +81,7 @@ export class SyncResource {
    * indexing — a returned document_id means the bytes were stored, and the
    * document then moves through ingest_status 'processing' to 'indexed' or
    * 'failed'. Use waitForIngest() before treating a pushed document as
-   * searchable, or the first search after a push silently misses it.
+   * processed, or the first read after a push silently misses it.
    *
    * Partial failure is per-result, not per-request: inspect `error` on each
    * entry of `results`.

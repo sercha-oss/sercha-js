@@ -134,9 +134,8 @@ export class StructuresResource {
    * of the current one.
    *
    * The confirmation locks (the agent never re-litigates it) and moves the
-   * document out of the working structure: it leaves every pack-scoped query
-   * and, once search subtraction is active, search results too. Nothing is
-   * deleted — the row, blobs and indexes survive, and a later
+   * document out of the working structure: it leaves every pack-scoped query.
+   * Nothing is deleted — the row, blobs and indexes survive, and a later
    * assignDocument() restores the document to a pack.
    */
   async confirmFlag(

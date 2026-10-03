@@ -19,7 +19,7 @@ export type GrantSubjectKind = 'user' | 'group';
 /**
  * What the grant permits.
  *
- * - `select`: read the object (query rows, list documents, search hits).
+ * - `select`: read the object (query rows, list documents).
  * - `use`: use a pipeline or binding without administering it.
  * - `admin`: administer the object.
  * - `annotate`: author ledger records about a corpus. Needs `select` too.

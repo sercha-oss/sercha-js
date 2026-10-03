@@ -6,7 +6,7 @@ import { RunsResource } from './resources/runs.js';
 import { GenieResource } from './resources/genie.js';
 import { CatalogueResource } from './resources/catalogue.js';
 import { LedgerResource } from './resources/ledger.js';
-import { SearchResource } from './resources/search.js';
+import { DocumentsResource } from './resources/documents.js';
 import { CorpusesResource } from './resources/corpuses.js';
 import { StructuresResource } from './resources/structures.js';
 import { SyncResource } from './resources/sync.js';
@@ -21,7 +21,7 @@ import type {
   GenieMessage,
 } from './types/genie.js';
 import type { ListRunsQuery, Run, WaitForRunOptions } from './types/runs.js';
-import type { Document, SearchRequest, SearchResponse } from './types/search.js';
+import type { Document } from './types/documents.js';
 import type { CatalogueEntityType, CatalogueProperty, CatalogueTree } from './types/catalogue.js';
 import type {
   AppendLedgerRecord,
@@ -64,7 +64,6 @@ export interface Sercha {
   all<T = QueryRow>(serchaql: string, options?: PaginateOptions): Promise<T[]>;
   one<T = QueryRow>(serchaql: string, options?: QueryOptions): Promise<T>;
 
-  search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse>;
   /**
    * Resolve a document id to its metadata.
    *
@@ -187,7 +186,7 @@ export interface Sercha {
    *
    * On the interface because these are application surfaces, not admin
    * plumbing: an ingest UI is push-then-poll (pushDocuments + waitForIngest —
-   * acceptance is not indexing, so without the poll the first search after a
+   * acceptance is not indexing, so without the poll the first query after a
    * push silently misses the document), and an ops page exists to surface the
    * sync `warning` field, which flags a sync that "succeeded" while almost
    * certainly misconfigured. Both should be buildable against a stub.
@@ -222,7 +221,7 @@ export class SerchaClient implements Sercha {
   readonly genie: GenieResource;
   readonly catalogue: CatalogueResource;
   readonly ledger: LedgerResource;
-  readonly documents: SearchResource;
+  readonly documents: DocumentsResource;
   readonly structures: StructuresResource;
   readonly corpuses: CorpusesResource;
   readonly sync: SyncResource;
@@ -252,7 +251,7 @@ export class SerchaClient implements Sercha {
     this.genie = new GenieResource(this.transport);
     this.catalogue = new CatalogueResource(this.transport);
     this.ledger = new LedgerResource(this.transport);
-    this.documents = new SearchResource(this.transport);
+    this.documents = new DocumentsResource(this.transport);
     this.structures = new StructuresResource(this.transport);
     this.corpuses = new CorpusesResource(this.transport);
     this.sync = new SyncResource(this.transport);
@@ -277,10 +276,6 @@ export class SerchaClient implements Sercha {
 
   one<T = QueryRow>(serchaql: string, options?: QueryOptions): Promise<T> {
     return this.queries.one<T>(serchaql, options);
-  }
-
-  search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResponse> {
-    return this.documents.search(request, signal);
   }
 
   getDocument(documentId: string, signal?: AbortSignal): Promise<Document> {

@@ -47,7 +47,7 @@ describe('TokenManager', () => {
     const manager = new TokenManager(
       resolveConfig({
         baseUrl: 'https://sercha.test',
-        auth: { clientId: 'id', clientSecret: 'secret', scopes: ['mcp:search'] },
+        auth: { clientId: 'id', clientSecret: 'secret', scopes: ['genie:use'] },
         fetch: fetchImpl as never,
       }),
     );
@@ -55,7 +55,7 @@ describe('TokenManager', () => {
     const body = new URLSearchParams(
       (fetchImpl.mock.calls[0] as [string, RequestInit])[1].body as string,
     );
-    expect(body.get('scope')).toBe('mcp:search');
+    expect(body.get('scope')).toBe('genie:use');
   });
 
   it('caches a token across calls', async () => {
